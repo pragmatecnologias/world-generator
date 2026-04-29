@@ -108,6 +108,8 @@ export type ScatterZone = {
   assetIds: string[];
   settings: ScatterSettings;
   generatedObjectIds: string[];
+  tags?: string[];
+  materialId?: string;
 };
 
 export type ZoneDefinition = ScatterZone;

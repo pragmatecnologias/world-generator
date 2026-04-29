@@ -2,12 +2,13 @@ import * as THREE from "three";
 import type { TerrainData } from "../types";
 
 const MATERIAL_COLORS: Record<string, string> = {
-  grass: "#6ea95e",
-  dirt: "#8d6b44",
-  mud: "#53402f",
-  rock: "#7d8791",
-  sand: "#d8c27f",
-  track: "#4b4b4f",
+  grass: "#84b96a",
+  dirt: "#b18458",
+  mud: "#70513d",
+  rock: "#c7b49a",
+  sand: "#e0c97b",
+  track: "#d8bc69",
+  water: "#4da4e3",
 };
 
 export function terrainIndex(x: number, z: number, resolution: number) {
@@ -48,6 +49,21 @@ export function worldToTerrainHeight(point: THREE.Vector3, terrain: TerrainData)
   return sampleTerrainHeight(point, terrain).height;
 }
 
+function terrainColorTint(materialId: string, height: number, slope: number, worldX: number, worldZ: number) {
+  const base = new THREE.Color(MATERIAL_COLORS[materialId] ?? "#ffffff");
+  const noise = (Math.sin(worldX * 0.18 + worldZ * 0.23) * 0.5 + Math.cos(worldX * 0.09 - worldZ * 0.14) * 0.5 + 1) * 0.5;
+  const slopeFactor = THREE.MathUtils.clamp(1 - slope * 0.09, 0.58, 1.08);
+  const heightFactor = THREE.MathUtils.clamp(1 + height * 0.035, 0.84, 1.14);
+  const tint = base.clone();
+  tint.offsetHSL(
+    materialId === "rock" ? -0.006 + noise * 0.012 : materialId === "sand" ? 0.01 - noise * 0.01 : 0.0,
+    materialId === "track" ? -0.025 : -0.012 + noise * 0.012,
+    materialId === "mud" ? -0.06 : materialId === "rock" ? -0.018 : 0.03,
+  );
+  tint.multiplyScalar((0.96 + noise * 0.1) * slopeFactor * heightFactor);
+  return tint;
+}
+
 export function createTerrainGeometry(terrain: TerrainData) {
   const geometry = new THREE.BufferGeometry();
   const positions: number[] = [];
@@ -62,8 +78,14 @@ export function createTerrainGeometry(terrain: TerrainData) {
       const index = terrainIndex(x, z, terrain.resolution);
       const worldX = (x / (terrain.resolution - 1)) * terrain.width - halfW;
       const worldZ = (z / (terrain.resolution - 1)) * terrain.depth - halfD;
-      positions.push(worldX, terrain.heights[index] ?? 0, worldZ);
-      const color = new THREE.Color(MATERIAL_COLORS[terrain.materialMap[index] ?? "grass"] ?? "#ffffff");
+      const height = terrain.heights[index] ?? 0;
+      positions.push(worldX, height, worldZ);
+      const left = terrain.heights[terrainIndex(Math.max(0, x - 1), z, terrain.resolution)] ?? height;
+      const right = terrain.heights[terrainIndex(Math.min(terrain.resolution - 1, x + 1), z, terrain.resolution)] ?? height;
+      const up = terrain.heights[terrainIndex(x, Math.min(terrain.resolution - 1, z + 1), terrain.resolution)] ?? height;
+      const down = terrain.heights[terrainIndex(x, Math.max(0, z - 1), terrain.resolution)] ?? height;
+      const slope = Math.hypot(right - left, up - down);
+      const color = terrainColorTint(terrain.materialMap[index] ?? "grass", height, slope, worldX, worldZ);
       colors.push(color.r, color.g, color.b);
     }
   }
@@ -94,14 +116,17 @@ export function updateTerrainGeometry(geometry: THREE.BufferGeometry, terrain: T
   for (let z = 0; z < terrain.resolution; z += 1) {
     for (let x = 0; x < terrain.resolution; x += 1) {
       const index = terrainIndex(x, z, terrain.resolution);
-      const vertexIndex = index * 3;
       const worldX = (x / (terrain.resolution - 1)) * terrain.width - halfW;
       const worldZ = (z / (terrain.resolution - 1)) * terrain.depth - halfD;
-      position.setXYZ(index, worldX, terrain.heights[index] ?? 0, worldZ);
-      const colorValue = MATERIAL_COLORS[terrain.materialMap[index] ?? "grass"] ?? "#ffffff";
-      const c = new THREE.Color(colorValue);
+      const height = terrain.heights[index] ?? 0;
+      position.setXYZ(index, worldX, height, worldZ);
+      const left = terrain.heights[terrainIndex(Math.max(0, x - 1), z, terrain.resolution)] ?? height;
+      const right = terrain.heights[terrainIndex(Math.min(terrain.resolution - 1, x + 1), z, terrain.resolution)] ?? height;
+      const up = terrain.heights[terrainIndex(x, Math.min(terrain.resolution - 1, z + 1), terrain.resolution)] ?? height;
+      const down = terrain.heights[terrainIndex(x, Math.max(0, z - 1), terrain.resolution)] ?? height;
+      const slope = Math.hypot(right - left, up - down);
+      const c = terrainColorTint(terrain.materialMap[index] ?? "grass", height, slope, worldX, worldZ);
       color.setXYZ(index, c.r, c.g, c.b);
-      void vertexIndex;
     }
   }
 

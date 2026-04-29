@@ -11,12 +11,12 @@ import type { AiWorldCommand } from "../ai/aiWorldCommandSchema";
 import type { WorldPatch } from "../ai/worldPatchSchema";
 import { buildWorldExportPackage } from "../export";
 
-export function applyGenerationConfigText(text: string): { project?: WorldProject; issues: string[] } {
+export function applyGenerationConfigText(text: string, assetSource?: WorldProject["assets"]): { project?: WorldProject; issues: string[] } {
   try {
     const parsed = JSON.parse(text) as WorldGenerationConfig;
     const issues = validateWorldGenerationConfig(parsed);
     if (issues.length > 0) return { issues };
-    return { project: generateWorld(parsed), issues: [] };
+    return { project: generateWorld(parsed, assetSource), issues: [] };
   } catch (error) {
     return { issues: [String(error)] };
   }

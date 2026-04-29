@@ -241,6 +241,7 @@ export function validateWorldDocumentIntegrity(document: WorldDocument): string[
   });
   normalized.placementGroups.forEach((group) => {
     ensureUnique(group.id, "foliage-group");
+    if (!group.assetIds.length) issues.push(`placement group ${group.id} has no asset ids`);
     group.instances.forEach((instance) => {
       ensureUnique(instance.id, "foliage-instance");
       if (!assetIds.has(instance.assetId)) issues.push(`foliage instance ${instance.id} missing asset ${instance.assetId}`);
@@ -248,12 +249,15 @@ export function validateWorldDocumentIntegrity(document: WorldDocument): string[
   });
   normalized.zones.forEach((zone) => {
     ensureUnique(zone.id, "scatter-zone");
+    if (zone.points.length < 3) issues.push(`zone ${zone.id} must have at least 3 points`);
+    if (zone.shape !== "circle" && zone.points.length < 4) issues.push(`zone ${zone.id} polygonal shapes should have at least 4 points`);
     zone.generatedObjectIds.forEach((id) => {
       if (!normalized.objects.some((object) => object.id === id)) issues.push(`zone ${zone.id} missing generated object ${id}`);
     });
   });
   normalized.paths.forEach((road) => {
     ensureUnique(road.id, "road");
+    if (road.points.length < 2) issues.push(`path ${road.id} must have at least 2 points`);
     if (!materialIds.has(road.materialId)) issues.push(`path ${road.id} missing material ${road.materialId}`);
   });
   normalized.markers.forEach((marker) => ensureUnique(marker.id, "marker"));

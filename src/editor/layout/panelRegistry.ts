@@ -33,7 +33,7 @@ export const workspacePanelRegistry: Record<WorkspacePanelId, WorkspacePanelDefi
   bottom: {
     id: "bottom",
     title: "Workspace drawer",
-    summary: "Switch between assets, layers, scene, validation, console, export, and JSON control planes.",
+    summary: "Switch between assets, layers, scene, validation, console, export, and JSON Ops control planes.",
     side: "bottom",
     defaultMode: "docked",
   },
@@ -46,7 +46,7 @@ export const bottomTabRegistry: BottomTabDefinition[] = [
   { id: "validation", label: "Validation" },
   { id: "console", label: "Console" },
   { id: "export", label: "Export" },
-  { id: "json", label: "JSON" },
+  { id: "json", label: "JSON Ops" },
 ];
 
 export const defaultBottomTabOrder: BottomTabId[] = bottomTabRegistry.map((tab) => tab.id);

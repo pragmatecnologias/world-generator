@@ -53,14 +53,14 @@ function themeAmplitude(theme: WorldGenerationConfig["theme"]) {
     case "desert":
       return 0.42;
     case "forest":
-      return 0.82;
+      return 0.98;
     case "biblical":
-      return 1.15;
+      return 1.25;
     case "mountain":
-      return 1.55;
+      return 1.68;
     case "offroad":
     default:
-      return 0.68;
+      return 0.78;
   }
 }
 
@@ -181,6 +181,84 @@ function applyThemeSpecificPass(terrain: TerrainData, config: WorldGenerationCon
   return next;
 }
 
+function applyCompositionPass(terrain: TerrainData, config: WorldGenerationConfig) {
+  const rng = createSeededRng(config.seed + 9151);
+  let next = terrain;
+  const halfW = terrain.width / 2;
+  const halfD = terrain.depth / 2;
+
+  const clearings = config.theme === "forest"
+    ? [
+        { x: -terrain.width * 0.04, z: terrain.depth * 0.02, size: terrain.width * 0.18, strength: 0.8, materialId: "grass", mode: "flatten" as const },
+        { x: terrain.width * 0.12, z: -terrain.depth * 0.08, size: terrain.width * 0.12, strength: 0.55, materialId: "grass", mode: "smooth" as const },
+      ]
+    : config.theme === "desert"
+      ? [
+          { x: -terrain.width * 0.05, z: terrain.depth * 0.04, size: terrain.width * 0.16, strength: 0.45, materialId: "sand", mode: "flatten" as const },
+        ]
+      : [
+          { x: 0, z: 0, size: terrain.width * 0.14, strength: 0.55, materialId: "track", mode: "flatten" as const },
+        ];
+
+  for (const clearing of clearings) {
+    next = applyTerrainBrush(
+      next,
+      new THREE.Vector3(clearing.x, 0, clearing.z),
+      { size: clearing.size, strength: clearing.strength, falloff: "smooth", materialId: clearing.materialId },
+      clearing.mode,
+    );
+  }
+
+  const ridgeBands = config.theme === "forest"
+    ? [
+        { x: -halfW * 0.28, z: halfD * 0.08, size: terrain.width * 0.16, strength: 0.7, materialId: "rock" },
+        { x: halfW * 0.24, z: -halfD * 0.18, size: terrain.width * 0.14, strength: 0.58, materialId: "dirt" },
+      ]
+    : config.theme === "mountain"
+      ? [
+          { x: -halfW * 0.24, z: halfD * 0.06, size: terrain.width * 0.18, strength: 0.95, materialId: "rock" },
+          { x: halfW * 0.2, z: -halfD * 0.16, size: terrain.width * 0.16, strength: 0.84, materialId: "rock" },
+        ]
+      : [
+          { x: -halfW * 0.18, z: halfD * 0.02, size: terrain.width * 0.14, strength: 0.5, materialId: config.theme === "desert" ? "sand" : "mud" },
+          { x: halfW * 0.16, z: -halfD * 0.12, size: terrain.width * 0.13, strength: 0.42, materialId: config.theme === "desert" ? "sand" : "rock" },
+        ];
+
+  for (const ridge of ridgeBands) {
+    next = applyTerrainBrush(
+      next,
+      new THREE.Vector3(ridge.x, 0, ridge.z),
+      {
+        size: ridge.size,
+        strength: ridge.strength + rng() * 0.05,
+        falloff: "smooth",
+        materialId: ridge.materialId,
+      },
+      "raise",
+    );
+  }
+
+  const basin = config.theme === "forest"
+    ? { x: halfW * 0.2, z: halfD * 0.22, size: terrain.width * 0.1, strength: 0.55, materialId: "mud" }
+    : config.theme === "desert"
+      ? { x: halfW * 0.22, z: halfD * 0.18, size: terrain.width * 0.12, strength: 0.38, materialId: "sand" }
+      : { x: halfW * 0.16, z: halfD * 0.16, size: terrain.width * 0.11, strength: 0.5, materialId: "mud" };
+
+  next = applyTerrainBrush(
+    next,
+    new THREE.Vector3(basin.x, 0, basin.z),
+    {
+      size: basin.size,
+      strength: basin.strength,
+      falloff: "smooth",
+      materialId: basin.materialId,
+    },
+    "lower",
+  );
+
+  return next;
+}
+
 function deriveMaterialMapFromHeights(terrain: TerrainData, theme: WorldGenerationConfig["theme"], heightScale: number) {
   const materialMap = Array.from({ length: terrain.heights.length }, () => "grass");
   for (let i = 0; i < terrain.heights.length; i += 1) {
@@ -252,6 +330,7 @@ export function generateTerrain(config: WorldGenerationConfig): TerrainData {
 
   terrainData = applyTerrainFeaturePass(terrainData, config);
   terrainData = applyThemeSpecificPass(terrainData, config);
+  terrainData = applyCompositionPass(terrainData, config);
   terrainData.materialMap = deriveMaterialMapFromHeights(terrainData, theme, terrain.heightScale);
 
   const patchCenters = [
@@ -313,6 +392,7 @@ export function applyRoadSurfaceTreatment(
   for (const road of roads) {
     if (road.points.length < 2) continue;
     const segmentCount = road.closedLoop ? road.points.length : road.points.length - 1;
+    const isWater = road.materialId === "water";
     for (let i = 0; i < segmentCount; i += 1) {
       const start = road.points[i];
       const end = road.points[(i + 1) % road.points.length];
@@ -330,23 +410,23 @@ export function applyRoadSurfaceTreatment(
         const centerZ = THREE.MathUtils.lerp(startVec.z, endVec.z, t);
         const centerY = THREE.MathUtils.lerp(startVec.y, endVec.y, t);
         const center = new THREE.Vector3(centerX, 0, centerZ);
-        const corridorSize = Math.max(road.width * 0.55, 2.5);
-        const shoulderSize = road.width * 0.95;
-        const bankSize = road.width * 1.25;
-        next = applyTerrainBrush(next, center, { size: corridorSize, strength: 0.35, falloff: "smooth", materialId: "track", flattenHeight: centerY }, "flatten");
-        next = applyTerrainBrush(next, center, { size: corridorSize * 1.05, strength: 0.9, falloff: "smooth", materialId: "track" }, "paint");
+        const corridorSize = isWater ? Math.max(road.width * 0.36, 1.6) : Math.max(road.width * 0.45, 2.1);
+        const shoulderSize = isWater ? road.width * 0.62 : road.width * 0.82;
+        const bankSize = isWater ? road.width * 0.92 : road.width * 1.02;
+        next = applyTerrainBrush(next, center, { size: corridorSize, strength: 0.35, falloff: "smooth", materialId: isWater ? "water" : "track", flattenHeight: isWater ? centerY - road.width * 0.03 : centerY }, isWater ? "lower" : "flatten");
+        next = applyTerrainBrush(next, center, { size: corridorSize * (isWater ? 1.1 : 1.05), strength: 0.9, falloff: "smooth", materialId: isWater ? "water" : "track" }, "paint");
 
-        const sideOffset = shoulderSize * 0.48;
-        const bankOffset = bankSize * 0.56;
+        const sideOffset = shoulderSize * 0.46;
+        const bankOffset = bankSize * 0.54;
         const left = new THREE.Vector3(centerX + perpX * sideOffset, 0, centerZ + perpZ * sideOffset);
         const right = new THREE.Vector3(centerX - perpX * sideOffset, 0, centerZ - perpZ * sideOffset);
         const leftBank = new THREE.Vector3(centerX + perpX * bankOffset, 0, centerZ + perpZ * bankOffset);
         const rightBank = new THREE.Vector3(centerX - perpX * bankOffset, 0, centerZ - perpZ * bankOffset);
 
-        next = applyTerrainBrush(next, left, { size: shoulderSize * 0.65, strength: 0.45, falloff: "smooth", materialId: shoulder }, "paint");
-        next = applyTerrainBrush(next, right, { size: shoulderSize * 0.65, strength: 0.45, falloff: "smooth", materialId: shoulder }, "paint");
-        next = applyTerrainBrush(next, leftBank, { size: road.width * 0.8, strength: 0.2 + rng() * 0.2, falloff: "smooth", materialId: theme === "desert" ? "sand" : "rock" }, rng() > 0.5 ? "raise" : "lower");
-        next = applyTerrainBrush(next, rightBank, { size: road.width * 0.8, strength: 0.2 + rng() * 0.2, falloff: "smooth", materialId: theme === "desert" ? "sand" : "rock" }, rng() > 0.5 ? "raise" : "lower");
+        next = applyTerrainBrush(next, left, { size: shoulderSize * 0.65, strength: 0.45, falloff: "smooth", materialId: isWater ? "sand" : shoulder }, "paint");
+        next = applyTerrainBrush(next, right, { size: shoulderSize * 0.65, strength: 0.45, falloff: "smooth", materialId: isWater ? "sand" : shoulder }, "paint");
+        next = applyTerrainBrush(next, leftBank, { size: road.width * 0.8, strength: 0.2 + rng() * 0.2, falloff: "smooth", materialId: isWater ? "sand" : theme === "desert" ? "sand" : "rock" }, isWater ? "lower" : rng() > 0.5 ? "raise" : "lower");
+        next = applyTerrainBrush(next, rightBank, { size: road.width * 0.8, strength: 0.2 + rng() * 0.2, falloff: "smooth", materialId: isWater ? "sand" : theme === "desert" ? "sand" : "rock" }, isWater ? "lower" : rng() > 0.5 ? "raise" : "lower");
       }
     }
   }

@@ -6,6 +6,7 @@ export type PathDefinition = {
   width: number;
   tags?: string[];
   closedLoop?: boolean;
+  materialId?: string;
 };
 
 export type ZoneDefinition = {

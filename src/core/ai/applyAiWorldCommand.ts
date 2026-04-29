@@ -27,7 +27,7 @@ function mergeGenerationConfig(seed: number, difficulty: number, partial?: Parti
 export function applyAiWorldCommand(project: WorldProject, command: AiWorldCommand): { project: WorldProject; issues: string[] } {
   switch (command.type) {
     case "generateOffroadTrack":
-      return { project: generateWorld(mergeGenerationConfig(command.seed, command.difficulty, command.config)), issues: [] };
+      return { project: generateWorld(mergeGenerationConfig(command.seed, command.difficulty, command.config), project.assets), issues: [] };
     case "addRockyBorder": {
       const rng = createSeededRng(command.seed ?? 1337);
       const radius = 0.42 + command.density * 0.01;

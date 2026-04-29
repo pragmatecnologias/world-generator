@@ -38,6 +38,14 @@ export {
   worldProjectToPaths,
   worldProjectToZones,
 } from "../../worldDocument";
-export type { TerrainNoiseConfig, WorldGenerationBiomeConfig, WorldGenerationConfig, WorldGenerationRoadConfig } from "./WorldConfigSchema";
+export type {
+  TerrainNoiseConfig,
+  WorldGenerationBiomeConfig,
+  WorldGenerationConfig,
+  WorldGenerationPathConfig,
+  WorldGenerationPlacementRuleConfig,
+  WorldGenerationRoadConfig,
+  WorldGenerationZoneConfig,
+} from "./WorldConfigSchema";
 export type { PathDefinition, PlacementRule, ZoneDefinition, CoreWorldGeneratorConfig } from "./CoreWorldSchema";
 export { roadsToPaths, pathsToRoads, scatterZonesToZones, foliageGroupsToPlacementGroups } from "./compat";

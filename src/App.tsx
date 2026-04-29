@@ -645,7 +645,7 @@ function EditorApp() {
   };
 
   const applyGenerationConfigDraft = () => {
-    const result = applyGenerationConfigText(worldConfigDraft);
+    const result = applyGenerationConfigText(worldConfigDraft, project.assets);
     setWorldConfigIssues(result.issues);
     if (result.issues.length > 0 || !result.project) {
       setWorldConfigStatus(`Generation config invalid: ${result.issues.join(" | ")}`);
@@ -1011,6 +1011,28 @@ function EditorApp() {
     setStatusMessage("Exported world JSON");
   };
 
+  const openPreviewWindow = (strict = false) => {
+    onExport();
+    const suffix = strict ? "&strictExportOnly=1" : "";
+    if (strict) {
+      const projectHash = stableHash(projectRef.current);
+      try {
+        window.localStorage.setItem(
+          "world-generator.preview-proof",
+          JSON.stringify({
+            confirmedAt: new Date().toISOString(),
+            strictExportOnly: true,
+            projectHash,
+          }),
+        );
+      } catch {
+        // ignore preview proof persistence failures
+      }
+      setPreviewConfirmed(true);
+    }
+    window.open(`?preview=1${suffix}`, "_blank");
+  };
+
   const runMenuAction = (action: string) => {
     switch (action) {
       case "new":
@@ -1032,7 +1054,7 @@ function EditorApp() {
         onRedo();
         break;
       case "preview":
-        window.open("?preview=1", "_blank");
+        openPreviewWindow(false);
         break;
       case "export":
         onExport();
@@ -1424,7 +1446,7 @@ function EditorApp() {
       { id: "open", label: "Open world", group: "Project", shortcut: "Ctrl/Cmd+O", run: () => document.getElementById("load-project")?.click() },
       { id: "save", label: "Save", group: "Project", shortcut: "Ctrl/Cmd+S", run: onSave },
       { id: "save-as", label: "Save as", group: "Project", shortcut: "Ctrl/Cmd+Shift+S", run: onSaveAs },
-      { id: "preview", label: "Open preview", group: "Project", shortcut: "Ctrl/Cmd+P", run: () => window.open("?preview=1", "_blank") },
+      { id: "preview", label: "Open preview", group: "Project", shortcut: "Ctrl/Cmd+P", run: () => openPreviewWindow(false) },
       { id: "export", label: "Export JSON", group: "Project", shortcut: "E", run: onExport },
       { id: "validate", label: "Open validation", group: "Project", shortcut: "L", run: () => setBottomTab("validation") },
       { id: "undo", label: "Undo", group: "Edit", shortcut: "Ctrl/Cmd+Z", run: onUndo },
@@ -1499,8 +1521,8 @@ function EditorApp() {
             <button onClick={onUndo}>Undo</button>
             <button onClick={onRedo}>Redo</button>
             <button onClick={onPlayTest}>Play/Test</button>
-            <button onClick={() => window.open("?preview=1", "_blank")}>Open Preview</button>
-            <button onClick={() => { setPreviewConfirmed(false); window.open("?preview=1&strictExportOnly=1", "_blank"); }}>Open Preview (Strict)</button>
+            <button onClick={() => openPreviewWindow(false)}>Open Preview</button>
+            <button onClick={() => openPreviewWindow(true)}>Open Preview (Strict)</button>
             <button onClick={proofSaveAndReload}>Reload Proof</button>
             <button onClick={onExport}>Export</button>
             <button className={overallStatus !== "REAL" ? "active" : ""} onClick={() => setBottomTab("validation")}>Validate</button>
@@ -2367,6 +2389,73 @@ function EditorApp() {
                 />
                 <div className="chip-row">
                   <button onClick={() => setWorldConfigDraft(JSON.stringify(DEFAULT_WORLD_GENERATION_CONFIG, null, 2))}>Load Default Config</button>
+                  <button onClick={() => setWorldConfigDraft(JSON.stringify({
+                    ...DEFAULT_WORLD_GENERATION_CONFIG,
+                    generator: "generic",
+                    theme: "forest",
+                    metadata: { ...(DEFAULT_WORLD_GENERATION_CONFIG.metadata ?? {}), description: "Generic path/zone generation preset" },
+                    paths: [
+                      {
+                        id: "generic-primary-path",
+                        type: "loop",
+                        tags: ["primary", "route", "loop"],
+                        width: 7,
+                        complexity: 9,
+                        smoothing: 0.72,
+                        center: { x: 0, z: 0 },
+                        radius: 26,
+                        checkpoints: 4,
+                        materialId: "track",
+                        flattenTerrain: true,
+                        smoothEdges: true,
+                      },
+                    ],
+                    zones: [
+                      {
+                        id: "generic-forest-zone",
+                        type: "blob",
+                        tags: ["forest", "dense"],
+                        center: { x: -18, z: 12 },
+                        radius: 20,
+                        irregularity: 0.34,
+                        materialId: "grass",
+                        assetTags: ["tree", "foliage"],
+                      },
+                      {
+                        id: "generic-rock-zone",
+                        type: "blob",
+                        tags: ["rock", "cliff"],
+                        center: { x: 22, z: -8 },
+                        radius: 16,
+                        irregularity: 0.22,
+                        materialId: "rock",
+                        assetTags: ["rock", "prop"],
+                      },
+                    ],
+                    placementRules: [
+                      {
+                        id: "generic-trees",
+                        assetTags: ["tree", "foliage"],
+                        zoneTags: ["forest"],
+                        avoidPathTags: ["primary"],
+                        slopeMax: 30,
+                        density: 0.65,
+                        count: 44,
+                        minSpacing: 3,
+                        cluster: { enabled: true, clusterCount: 5, radius: 10 },
+                      },
+                      {
+                        id: "generic-rocks",
+                        assetTags: ["rock", "prop"],
+                        zoneTags: ["rock"],
+                        avoidPathTags: ["primary"],
+                        slopeMax: 36,
+                        density: 0.4,
+                        count: 20,
+                        minSpacing: 4,
+                      },
+                    ],
+                  }, null, 2))}>Load Generic Config</button>
                   <button onClick={() => setWorldConfigDraft(JSON.stringify({ ...DEFAULT_WORLD_GENERATION_CONFIG, generator: "city", theme: "forest", metadata: { ...(DEFAULT_WORLD_GENERATION_CONFIG.metadata ?? {}), description: "City generator preset" } }, null, 2))}>Load City Config</button>
                   <button onClick={applyGenerationConfigDraft}>Generate World</button>
                 </div>

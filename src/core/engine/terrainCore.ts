@@ -5,12 +5,13 @@ import { applyTerrainBrush, terrainIndex } from "../../viewport/terrain";
 
 export function buildBaseTerrainMaterials(): TerrainMaterial[] {
   return [
-    { id: "grass", name: "Grass", color: "#6ea95e", roughness: 0.95, scale: 1 },
-    { id: "dirt", name: "Dirt", color: "#8d6b44", roughness: 1, scale: 1 },
-    { id: "mud", name: "Mud", color: "#53402f", roughness: 1, scale: 1 },
-    { id: "rock", name: "Rock", color: "#7d8791", roughness: 0.9, scale: 1 },
-    { id: "sand", name: "Sand", color: "#d8c27f", roughness: 1, scale: 1 },
-    { id: "track", name: "Track", color: "#4b4b4f", roughness: 1, scale: 1 },
+    { id: "grass", name: "Grass", color: "#84b96a", roughness: 0.95, scale: 1 },
+    { id: "dirt", name: "Dirt", color: "#b18458", roughness: 1, scale: 1 },
+    { id: "mud", name: "Mud", color: "#70513d", roughness: 1, scale: 1 },
+    { id: "rock", name: "Rock", color: "#c7b49a", roughness: 0.9, scale: 1 },
+    { id: "sand", name: "Sand", color: "#e0c97b", roughness: 1, scale: 1 },
+    { id: "track", name: "Track", color: "#d8bc69", roughness: 1, scale: 1 },
+    { id: "water", name: "Water", color: "#4da4e3", roughness: 0.22, scale: 1 },
   ];
 }
 

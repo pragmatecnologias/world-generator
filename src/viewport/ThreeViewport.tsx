@@ -70,24 +70,208 @@ type SceneObjectRecord = {
 };
 
 function makePlaceholderMesh(asset: AssetDefinition) {
-  const material = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(terrainMaterialColor(asset.category.toLowerCase())),
-    roughness: 0.85,
+  const category = asset.category.toLowerCase();
+  const name = asset.name.toLowerCase();
+  const tags = asset.tags.map((tag) => tag.toLowerCase());
+  const looksLike = (...needles: string[]) =>
+    needles.some((needle) => category.includes(needle) || name.includes(needle) || tags.some((tag) => tag.includes(needle)));
+  const hash = asset.id.split("").reduce((acc, char) => ((acc * 31 + char.charCodeAt(0)) >>> 0), 17);
+  const rand = (offset = 0) => {
+    const value = (hash + offset * 1013904223) >>> 0;
+    return ((value ^ (value >>> 16)) % 1000) / 1000;
+  };
+
+  const tint = new THREE.Color(terrainMaterialColor(category));
+  const leafMaterial = new THREE.MeshStandardMaterial({
+    color: looksLike("pine") ? new THREE.Color("#3d6d2f") : tint.clone().lerp(new THREE.Color("#5c9d42"), 0.76),
+    roughness: 0.9,
+    metalness: 0.02,
+  });
+  const barkMaterial = new THREE.MeshStandardMaterial({
+    color: new THREE.Color("#6a4a2d"),
+    roughness: 1,
+    metalness: 0,
+  });
+  const rockMaterial = new THREE.MeshStandardMaterial({
+    color: tint.clone().lerp(new THREE.Color("#c8b59d"), 0.4),
+    roughness: 0.96,
+    metalness: 0.02,
+  });
+  const buildingMaterial = new THREE.MeshStandardMaterial({
+    color: tint.clone().lerp(new THREE.Color("#caa56d"), 0.32),
+    roughness: 0.92,
+    metalness: 0.01,
+  });
+  const accentMaterial = new THREE.MeshStandardMaterial({
+    color: tint.clone().lerp(new THREE.Color("#ffffff"), 0.15),
+    roughness: 0.75,
     metalness: 0.05,
   });
-  if (asset.category.toLowerCase().includes("tree") || asset.name.toLowerCase().includes("tree")) {
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.1, 8), new THREE.MeshStandardMaterial({ color: "#6b4f32" }));
-    trunk.position.y = 0.55;
-    const crown = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.5, 10), material);
-    crown.position.y = 1.7;
+
+  if (looksLike("tree", "foliage", "bush", "plant", "shrub", "pine")) {
     const group = new THREE.Group();
-    group.add(trunk, crown);
+    const trunkHeight = 1.15 + rand(1) * 0.55;
+    const trunkRadius = 0.11 + rand(2) * 0.06;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(trunkRadius * 0.9, trunkRadius * 1.15, trunkHeight, 8), barkMaterial);
+    trunk.position.y = trunkHeight / 2;
+    trunk.rotation.z = rand(3) * 0.03 - 0.015;
+    group.add(trunk);
+
+    const canopyHeight = looksLike("shrub") ? 0.95 + rand(4) * 0.2 : 2.0 + rand(4) * 0.72;
+    const canopyRadius = looksLike("shrub") ? 0.44 + rand(5) * 0.14 : 0.88 + rand(5) * 0.34;
+    const coneCount = looksLike("pine") ? 4 : 3;
+    for (let i = 0; i < coneCount; i += 1) {
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(canopyRadius * (1 - i * 0.16), canopyHeight * (1 - i * 0.1), 10, 1),
+        leafMaterial,
+      );
+      cone.position.y = trunkHeight + canopyHeight * 0.24 + i * 0.32;
+      cone.rotation.y = rand(10 + i) * Math.PI * 2;
+      cone.scale.setScalar(1 - i * 0.08);
+      group.add(cone);
+    }
+
+    const crown = new THREE.Mesh(new THREE.SphereGeometry(canopyRadius * 1.05, 10, 9), leafMaterial);
+    crown.position.y = trunkHeight + canopyHeight * 0.7;
+    crown.scale.set(1.2, looksLike("shrub") ? 0.78 : 0.95, 1.2);
+    group.add(crown);
     return group;
   }
-  if (asset.name.toLowerCase().includes("rock")) {
-    return new THREE.Mesh(new THREE.DodecahedronGeometry(0.85, 0), material);
+
+  if (looksLike("rock", "stone", "boulder", "cliff", "crag")) {
+    const group = new THREE.Group();
+    const base = new THREE.Mesh(new THREE.IcosahedronGeometry(0.82 + rand(1) * 0.22, 0), rockMaterial);
+    base.scale.set(1.2, 0.82, 1.35);
+    base.rotation.set(rand(2) * 0.25, rand(3) * Math.PI * 2, rand(4) * 0.15);
+    group.add(base);
+
+    const chip = new THREE.Mesh(new THREE.IcosahedronGeometry(0.48 + rand(5) * 0.12, 0), rockMaterial);
+    chip.position.set(0.34, 0.24, -0.08);
+    chip.rotation.set(rand(6) * 0.5, rand(7) * Math.PI * 2, rand(8) * 0.5);
+    group.add(chip);
+
+    const slab = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.62, 0.38, 6), rockMaterial);
+    slab.position.set(-0.2, -0.24, 0.16);
+    slab.rotation.set(rand(9) * 0.18 - 0.09, rand(10) * Math.PI * 2, rand(11) * 0.18 - 0.09);
+    group.add(slab);
+    return group;
   }
-  return new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+
+  if (looksLike("building", "house", "cabin", "barn", "shed", "hut", "tower", "structure")) {
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.95, 1.1), buildingMaterial);
+    body.position.y = 0.48;
+    group.add(body);
+
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.82, 0.72, 4), accentMaterial);
+    roof.position.y = 1.08;
+    roof.rotation.y = Math.PI / 4;
+    roof.scale.set(1, 1.1, 1);
+    group.add(roof);
+
+    const door = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.38, 0.04), barkMaterial);
+    door.position.set(0, 0.28, 0.58);
+    group.add(door);
+    return group;
+  }
+
+  if (looksLike("barrier", "fence", "sign", "post", "marker", "prop")) {
+    const group = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 1.2, 6), accentMaterial);
+    pole.position.y = 0.6;
+    group.add(pole);
+
+    const crossbar = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.12, 0.12), buildingMaterial);
+    crossbar.position.set(0, 1.05, 0);
+    crossbar.rotation.z = rand(1) * 0.12 - 0.06;
+    group.add(crossbar);
+
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.08, 0.08), barkMaterial);
+    brace.position.set(0.24, 0.42, 0);
+    brace.rotation.z = -0.55;
+    group.add(brace);
+    return group;
+  }
+
+  if (looksLike("bridge")) {
+    const group = new THREE.Group();
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.22, 0.55), buildingMaterial);
+    deck.position.y = 0.45;
+    group.add(deck);
+    const railL = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.08, 0.08), barkMaterial);
+    railL.position.set(0, 0.95, 0.22);
+    group.add(railL);
+    const railR = railL.clone();
+    railR.position.z = -0.22;
+    group.add(railR);
+    const postL = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.9, 6), barkMaterial);
+    postL.position.set(-1.05, 0.3, 0);
+    group.add(postL);
+    const postR = postL.clone();
+    postR.position.x = 1.05;
+    group.add(postR);
+    return group;
+  }
+
+  if (looksLike("tent")) {
+    const group = new THREE.Group();
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.75, 0.9, 3), buildingMaterial);
+    base.position.y = 0.45;
+    base.rotation.y = Math.PI / 2;
+    group.add(base);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 1.15, 5), barkMaterial);
+    pole.position.y = 0.6;
+    group.add(pole);
+    const flap = new THREE.Mesh(new THREE.ConeGeometry(0.52, 0.72, 4), accentMaterial);
+    flap.position.y = 0.92;
+    flap.rotation.y = Math.PI / 4;
+    group.add(flap);
+    return group;
+  }
+
+  if (looksLike("camp", "fire")) {
+    const group = new THREE.Group();
+    const logs = [
+      new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.7, 6), barkMaterial),
+      new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.7, 6), barkMaterial),
+      new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.7, 6), barkMaterial),
+    ];
+    logs[0].rotation.z = Math.PI / 2;
+    logs[1].rotation.z = Math.PI / 3;
+    logs[2].rotation.z = -Math.PI / 3;
+    logs.forEach((log) => group.add(log));
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.4, 5), new THREE.MeshStandardMaterial({ color: "#ffb347", emissive: "#ff7d2b", emissiveIntensity: 1.1, roughness: 0.7 }));
+    flame.position.y = 0.25;
+    group.add(flame);
+    return group;
+  }
+
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.38, 0.82, 4, 8), materialForAsset(asset, tint));
+  body.position.y = 0.72;
+  body.rotation.y = rand(1) * Math.PI * 2;
+  group.add(body);
+
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.36, 8, 8), accentMaterial);
+  cap.position.y = 1.26;
+  cap.scale.set(1, 0.55, 1);
+  group.add(cap);
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.62, 0.22, 8), rockMaterial);
+  base.position.y = 0.11;
+  group.add(base);
+  return group;
+}
+
+function materialForAsset(asset: AssetDefinition, tint: THREE.Color) {
+  const category = asset.category.toLowerCase();
+  if (category.includes("metal") || category.includes("machine") || category.includes("vehicle")) {
+    return new THREE.MeshStandardMaterial({ color: tint.clone().lerp(new THREE.Color("#9ca3af"), 0.5), roughness: 0.55, metalness: 0.35 });
+  }
+  if (category.includes("wood") || category.includes("furniture")) {
+    return new THREE.MeshStandardMaterial({ color: tint.clone().lerp(new THREE.Color("#8b5a2b"), 0.45), roughness: 0.88, metalness: 0.02 });
+  }
+  return new THREE.MeshStandardMaterial({ color: tint.clone().lerp(new THREE.Color("#d1d5db"), 0.2), roughness: 0.78, metalness: 0.04 });
 }
 
 function cloneAssetObject(asset: AssetDefinition, loadedAsset: THREE.Object3D | undefined) {
@@ -117,6 +301,7 @@ function createPathMesh(road: RoadDefinition, terrain: TerrainData) {
   const colors: number[] = [];
   const color = new THREE.Color(terrainMaterialColor(road.materialId));
   const halfWidth = road.width / 2;
+  const isWater = road.materialId === "water";
 
   const points = road.points.map((point) => new THREE.Vector3(point.x, point.y, point.z));
 
@@ -137,8 +322,8 @@ function createPathMesh(road: RoadDefinition, terrain: TerrainData) {
   }
 
   vertices.forEach((pair) => {
-    positions.push(pair.left.x, pair.left.y + 0.05, pair.left.z);
-    positions.push(pair.right.x, pair.right.y + 0.05, pair.right.z);
+    positions.push(pair.left.x, pair.left.y + (isWater ? -0.08 : 0.05), pair.left.z);
+    positions.push(pair.right.x, pair.right.y + (isWater ? -0.08 : 0.05), pair.right.z);
     colors.push(color.r, color.g, color.b, color.r, color.g, color.b);
   });
 
@@ -155,7 +340,9 @@ function createPathMesh(road: RoadDefinition, terrain: TerrainData) {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geometry.computeVertexNormals();
-  const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
+  const material = isWater
+    ? new THREE.MeshStandardMaterial({ color: new THREE.Color("#58a7e6"), transparent: true, opacity: 0.78, roughness: 0.12, metalness: 0.02 })
+    : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
   return new THREE.Mesh(geometry, material);
 }
 
@@ -181,6 +368,56 @@ function buildZonePreview(zone: ScatterZone) {
 }
 
 const buildScatterPreview = buildZonePreview;
+
+function buildSkyDome(environment: WorldProject["environment"]) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  gradient.addColorStop(0, environment.backgroundColor);
+  gradient.addColorStop(0.42, environment.fogColor);
+  gradient.addColorStop(1, "#5d6f86");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const sunX = canvas.width * (0.5 + environment.sunDirection.x * 0.2);
+  const sunY = canvas.height * (0.55 - environment.sunDirection.y * 0.18);
+  const sunGlow = ctx.createRadialGradient(sunX, sunY, 8, sunX, sunY, 210);
+  sunGlow.addColorStop(0, "rgba(255,255,255,0.75)");
+  sunGlow.addColorStop(0.18, "rgba(255,244,200,0.35)");
+  sunGlow.addColorStop(0.5, "rgba(255,220,160,0.12)");
+  sunGlow.addColorStop(1, "rgba(255,220,160,0)");
+  ctx.fillStyle = sunGlow;
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, 210, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = 0.15;
+  ctx.fillStyle = "#ffffff";
+  for (let i = 0; i < 18; i += 1) {
+    const x = (i / 18) * canvas.width + ((i % 3) - 1) * 36;
+    const y = canvas.height * (0.2 + (i % 4) * 0.08);
+    ctx.beginPath();
+    ctx.ellipse(x, y, 72 + (i % 4) * 18, 18 + (i % 3) * 6, Math.sin(i * 2.1) * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  texture.anisotropy = 4;
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    side: THREE.BackSide,
+    depthWrite: false,
+  });
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(650, 32, 20), material);
+  dome.frustumCulled = false;
+  dome.renderOrder = -100;
+  return dome;
+}
 
 export default function ThreeViewport({
   project,
@@ -260,24 +497,32 @@ export default function ThreeViewport({
       ? new THREE.FogExp2(project.environment.fogColor, project.environment.fogDensity)
       : null;
 
-    const camera = new THREE.PerspectiveCamera(55, container.clientWidth / container.clientHeight, 0.1, 1000);
+    const skyDome = buildSkyDome(project.environment);
+    if (skyDome) {
+      scene.add(skyDome);
+    }
+
+    const camera = new THREE.PerspectiveCamera(36, container.clientWidth / container.clientHeight, 0.1, 1000);
     if (playMode) {
-      camera.position.set(0, 2.2, 14);
-      camera.lookAt(0, 1.5, 0);
+      camera.position.set(0, 3.0, 12.5);
+      camera.lookAt(0, 1.1, 0);
     } else {
-      camera.position.set(46, 48, 46);
-      camera.lookAt(0, 0, 0);
+      camera.position.set(36, 26, 34);
+      camera.lookAt(0, 0.8, 0);
     }
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
     renderer.shadowMap.enabled = true;
     container.replaceChildren(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.target.set(0, playMode ? 1.5 : 0, 0);
+    controls.target.set(0, playMode ? 1.2 : 0.5, 0);
     controls.enablePan = !playMode;
 
     const transformControls = new TransformControls(camera, renderer.domElement);
@@ -312,12 +557,21 @@ export default function ThreeViewport({
     transformRef.current = transformControls;
     scene.add(transformControls);
 
-    const ambient = new THREE.AmbientLight(0xffffff, project.environment.ambientIntensity);
+    const ambient = new THREE.HemisphereLight(0xeaf4ff, 0x6d5436, project.environment.ambientIntensity * 0.8);
     scene.add(ambient);
+    const fill = new THREE.DirectionalLight(0xb7d7ff, 0.35);
+    fill.position.set(-project.environment.sunDirection.x, Math.max(0.5, project.environment.sunDirection.y * 0.4), -project.environment.sunDirection.z).normalize();
+    scene.add(fill);
     const sun = new THREE.DirectionalLight(0xffffff, project.environment.sunIntensity);
     sun.position.set(project.environment.sunDirection.x, project.environment.sunDirection.y, project.environment.sunDirection.z).normalize();
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 0.5;
+    sun.shadow.camera.far = 120;
+    sun.shadow.camera.left = -45;
+    sun.shadow.camera.right = 45;
+    sun.shadow.camera.top = 45;
+    sun.shadow.camera.bottom = -45;
     scene.add(sun);
 
     const terrainGeometry = createTerrainGeometry(terrain);
@@ -335,7 +589,7 @@ export default function ThreeViewport({
 
     const grid = new THREE.GridHelper(terrain.width, terrain.resolution - 1, 0x7dd3fc, 0x334155);
     (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.25;
+    (grid.material as THREE.Material).opacity = readOnly ? 0.12 : 0.18;
     scene.add(grid);
 
     const brushGeometry = new THREE.RingGeometry(0.96, 1, 48);

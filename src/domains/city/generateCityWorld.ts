@@ -1,17 +1,13 @@
-import * as THREE from "three";
-import { createDefaultProject } from "../../defaultProject";
-import type { WorldProject } from "../../types";
-import type { WorldGenerationConfig } from "../../core/schema/WorldConfigSchema";
+import type { AssetDefinition, WorldProject } from "../../types";
+import type { WorldGenerationConfig, WorldGenerationPathConfig, WorldGenerationPlacementRuleConfig, WorldGenerationZoneConfig } from "../../core/schema/WorldConfigSchema";
 import { validateWorldGenerationConfig } from "../../core/schema/validators";
-import { buildBaseTerrainMaterials, buildGenericTerrain, applyPathEffects } from "../../core/engine/terrainCore";
-import { placeAssetsForWorld } from "../../core/generation/assetPlacementEngine";
-import { roadsToPaths } from "../../core/schema/compat";
+import { generateGenericWorld } from "../../core/generation/generateGenericWorld";
 
-function buildCityPaths(config: WorldGenerationConfig) {
+function buildCityPathConfigs(config: WorldGenerationConfig): WorldGenerationPathConfig[] {
   const terrain = config.terrain;
   const streetWidth = Math.max(4, terrain.width * 0.03);
   const half = terrain.width * 0.35;
-  const points = [
+  const rows = [
     [
       { x: -half, y: 0.1, z: -terrain.depth * 0.1 },
       { x: half, y: 0.1, z: -terrain.depth * 0.1 },
@@ -29,74 +25,86 @@ function buildCityPaths(config: WorldGenerationConfig) {
       { x: terrain.width * 0.1, y: 0.1, z: half },
     ],
   ];
-  return points.map((pts, index) => ({
+
+  return rows.map((points, index) => ({
     id: `city-path-${index + 1}`,
-    name: `Street ${index + 1}`,
-    points: pts,
+    type: "path",
+    tags: ["street", "grid", index % 2 === 0 ? "arterial" : "local"],
     width: streetWidth,
+    complexity: 4,
+    smoothing: 0.5,
+    points,
     materialId: index % 2 === 0 ? "track" : "dirt",
     flattenTerrain: true,
     smoothEdges: true,
-    closedLoop: false,
-    checkpointIds: [],
   }));
 }
 
-export function generateCityWorld(config: WorldGenerationConfig): WorldProject {
+function buildCityZones(config: WorldGenerationConfig): WorldGenerationZoneConfig[] {
+  const halfWidth = config.terrain.width * 0.4;
+  const halfDepth = config.terrain.depth * 0.25;
+  return [
+    {
+      id: "city-residential",
+      type: "rect",
+      tags: ["residential", "street"],
+      center: { x: -config.terrain.width * 0.18, z: -config.terrain.depth * 0.05 },
+      width: halfWidth,
+      depth: halfDepth,
+      materialId: "dirt",
+      assetTags: ["prop"],
+    },
+    {
+      id: "city-commercial",
+      type: "rect",
+      tags: ["commercial", "street"],
+      center: { x: config.terrain.width * 0.16, z: config.terrain.depth * 0.08 },
+      width: halfWidth * 0.85,
+      depth: halfDepth * 0.72,
+      materialId: "track",
+      assetTags: ["prop"],
+    },
+  ];
+}
+
+function buildCityPlacementRules(): WorldGenerationPlacementRuleConfig[] {
+  return [
+    {
+      id: "city-props",
+      assetTags: ["prop", "structure"],
+      zoneTags: ["residential", "commercial"],
+      avoidPathTags: ["street", "grid"],
+      slopeMax: 18,
+      density: 0.55,
+      count: 16,
+      minSpacing: 6,
+      cluster: { enabled: true, clusterCount: 5, radius: 12 },
+    },
+    {
+      id: "city-nature",
+      assetTags: ["rock", "foliage", "tree"],
+      zoneTags: ["residential"],
+      avoidPathTags: ["street"],
+      slopeMax: 25,
+      density: 0.28,
+      count: 10,
+      minSpacing: 8,
+    },
+  ];
+}
+
+export function generateCityWorld(config: WorldGenerationConfig, assetSource?: AssetDefinition[]): WorldProject {
   const issues = validateWorldGenerationConfig(config);
   if (issues.length > 0) throw new Error(`Invalid world generation config: ${issues.join(" | ")}`);
-
-  const base = createDefaultProject();
-  const terrain = buildGenericTerrain(config.seed, config.terrain, 0.2);
-  const roads = buildCityPaths(config);
-  const paths = roadsToPaths(roads);
-  const terrainWithPaths = applyPathEffects(terrain, paths.map((path) => ({ id: path.id, points: path.points, width: path.width, tags: ["street", "grid"], closedLoop: false })), "track");
-
-  const project: WorldProject = {
-    ...base,
-    id: `generated-city-${config.seed}`,
-    name: `Generated City World`,
-    version: base.version,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    terrain: terrainWithPaths,
-    materials: buildBaseTerrainMaterials(),
-    objects: [],
-    foliageGroups: [],
-    scatterZones: [],
-    roads,
-    markers: [
-      {
-        id: "city-start",
-        type: "start-finish",
-        name: "City Start",
-        position: { x: -terrain.width * 0.2, y: 0.1, z: -terrain.depth * 0.1 },
-        rotation: { x: 0, y: 0, z: 0 },
-        radius: 8,
-      },
-      {
-        id: "city-checkpoint-1",
-        type: "checkpoint",
-        name: "Checkpoint 1",
-        position: { x: 0, y: 0.1, z: -terrain.depth * 0.1 },
-        rotation: { x: 0, y: 0, z: 0 },
-        radius: 8,
-        metadata: { order: 1 },
-      },
-    ],
-    environment: {
-      ...base.environment,
-      backgroundColor: "#c7d4e4",
-      fogEnabled: true,
-      fogColor: "#d7dde5",
-      fogDensity: 0.008,
-      timeOfDay: "noon",
-      weather: "clear",
+  return generateGenericWorld(
+    {
+      ...config,
+      generator: "generic",
+      paths: buildCityPathConfigs(config),
+      zones: buildCityZones(config),
+      placementRules: buildCityPlacementRules(),
     },
-    layers: base.layers,
-    metadata: { description: config.metadata?.description ?? `Generated city from seed ${config.seed}` },
-  };
-
-  project.objects = placeAssetsForWorld(project.assets, project.terrain, config, project.roads);
-  return project;
+    "city",
+    assetSource,
+  );
 }
