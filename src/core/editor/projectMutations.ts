@@ -2,19 +2,40 @@ import type { AssetDefinition, WorldProject } from "../../types";
 import type { TerrainData } from "../../types";
 import { flattenRoadTerrain, terrainSlopeAt, terrainWorldToGrid } from "../../viewport/terrain";
 import * as THREE from "three";
+import { inferAssetCategory, inferAssetTags } from "../assets/assetRegistry";
 
 export function buildImportedAssetDefinition(fileName: string, dataUrl: string, thumbnailPath: string): AssetDefinition {
   const baseName = fileName.replace(/\.[^.]+$/, "");
+  const inferredCategory = inferAssetCategory({
+    id: "preview",
+    name: baseName,
+    category: "Imported",
+    filePath: fileName,
+    defaultScale: 1,
+    collisionType: "box",
+    canPaint: true,
+    tags: [baseName.toLowerCase()],
+  });
+  const inferredTags = inferAssetTags({
+    id: "preview",
+    name: baseName,
+    category: inferredCategory,
+    filePath: fileName,
+    defaultScale: 1,
+    collisionType: "box",
+    canPaint: true,
+    tags: [baseName.toLowerCase(), "imported"],
+  });
   return {
     id: crypto.randomUUID(),
     name: baseName,
-    category: "Imported",
+    category: inferredCategory,
     filePath: fileName,
     fileDataUrl: dataUrl,
     defaultScale: 1,
     collisionType: "box",
     canPaint: true,
-    tags: ["imported"],
+    tags: inferredTags,
     thumbnailPath,
     sourceType: fileName.endsWith(".gltf") ? "gltf" : "glb",
     importedAt: new Date().toISOString(),
@@ -25,7 +46,11 @@ export function buildImportedAssetDefinition(fileName: string, dataUrl: string, 
       minScale: 0.75,
       maxScale: 1.5,
     },
-    bounds: { width: 1, height: 1, depth: 1 },
+    bounds: baseName.toLowerCase().includes("tree")
+      ? { width: 1.2, height: 4.8, depth: 1.2 }
+      : baseName.toLowerCase().includes("rock")
+        ? { width: 1.8, height: 1.2, depth: 1.6 }
+        : { width: 1, height: 1, depth: 1 },
   };
 }
 
@@ -133,7 +158,7 @@ export function generateScatterForZone(
   const maxX = Math.max(a.x, b.x);
   const minZ = Math.min(a.z, b.z);
   const maxZ = Math.max(a.z, b.z);
-  const assets = zone.assetIds.length > 0 ? zone.assetIds : project.assets.filter((asset) => asset.canPaint).map((asset) => asset.id);
+  const assets = zone.assetIds.length > 0 ? zone.assetIds : project.assets.filter((asset) => asset.canPaint || asset.placementRules?.scatterEligible !== false).map((asset) => asset.id);
   const rng = mulberry32(hashSeed(seed));
   const generatedObjects = Array.from({ length: zone.settings.count }, () => {
     const assetId = assets[Math.floor(rng() * assets.length)];

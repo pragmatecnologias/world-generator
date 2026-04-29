@@ -1,12 +1,13 @@
 import type { AssetDefinition, WorldProject } from "../../types";
 import { parseWorldPayload, resolveWorldProject, saveProjectToStorage } from "../export";
+import { worldProjectToDocument } from "../worldDocument";
 
 export function saveProjectSnapshot(project: WorldProject) {
   saveProjectToStorage(project);
 }
 
 export function exportProjectSave(project: WorldProject) {
-  return JSON.stringify(project, null, 2);
+  return JSON.stringify(worldProjectToDocument(project), null, 2);
 }
 
 export function loadWorldProjectFromText(text: string): WorldProject | null {

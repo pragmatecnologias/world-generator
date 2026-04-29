@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ThreeViewport from "./viewport/ThreeViewport";
-import { createDefaultProject } from "./defaultProject";
 import type {
   AssetDefinition,
   BrushState,
@@ -12,7 +11,6 @@ import type {
 } from "./types";
 import { buildWorldExportPackage, exportWorld, loadProjectFromStorage, validateExportPackage } from "./core/export";
 import { validateProject } from "./core/validation";
-import { flattenPathTerrain } from "./viewport/terrain";
 import PreviewApp from "./PreviewApp";
 import { generateWorld } from "./core/generation/generateWorld";
 import { DEFAULT_WORLD_GENERATION_CONFIG, type WorldGenerationConfig } from "./core/schema/WorldConfigSchema";
@@ -49,19 +47,14 @@ import {
   saveProjectSnapshot,
 } from "./core/editor/sessionActions";
 import {
-  appendImportedAsset,
   buildImportedAssetDefinition,
-  deleteObjectById,
-  duplicateObjectById,
   generateZoneForProject,
-  patchAssetById,
-  patchObjectById,
-  patchPathById,
-  patchPathPointById,
 } from "./core/editor/projectMutations";
 import { runProofRun } from "./core/validation/proofRunner";
 import {
   applyWorldOperation,
+  applyWorldOperations,
+  createWorldOperation,
   normalizeWorldDocument,
   validateWorldDocumentIntegrity,
   worldDocumentToProject,
@@ -105,7 +98,7 @@ const terrainTools: { id: EditorTool; label: string }[] = [
 ];
 
 function loadInitialProject() {
-  return loadProjectFromStorage() ?? createDefaultProject();
+  return loadProjectFromStorage() ?? generateWorld(DEFAULT_WORLD_GENERATION_CONFIG);
 }
 
 function updateProjectHistory(
@@ -388,6 +381,13 @@ function EditorApp() {
     });
   };
 
+  const commitOperations = (operations: WorldOperation[]) => {
+    if (operations.length === 0) return;
+    commit((current) => worldDocumentToProject(applyWorldOperations(worldProjectToDocument(current), operations)));
+  };
+
+  const commitOperation = (operation: WorldOperation) => commitOperations([operation]);
+
   const applyWorldDocument = (document: WorldDocument, message: string) => {
     const normalized = normalizeWorldDocument(document);
     const issues = validateWorldDocumentIntegrity(normalized);
@@ -442,7 +442,7 @@ function EditorApp() {
       return;
     }
     const generated = result.project;
-    commit(() => generated);
+    commitOperation(createWorldOperation(generated));
     setSelectionObjectId(generated.objects[0]?.id);
     setSelectedAssetId(generated.assets[0]?.id);
     setWorldConfigStatus(`Generated world from seed ${generated.id.replace("generated-", "")}`);
@@ -605,7 +605,7 @@ function EditorApp() {
   };
 
   const onNewProject = () => {
-    const fresh = createDefaultProject();
+    const fresh = generateWorld(DEFAULT_WORLD_GENERATION_CONFIG);
     setProject(fresh);
     setHistory([fresh]);
     setFuture([]);
@@ -762,7 +762,7 @@ function EditorApp() {
       dataUrl,
       createAssetThumbnail(file.name.replace(/\.[^.]+$/, ""), "Imported") ?? "",
     );
-    commit((current) => appendImportedAsset(current, asset));
+    commitOperation({ type: "addAsset", payload: asset });
     setSelectedAssetId(asset.id);
     setBottomTab("assets");
     setStatusMessage(`Imported ${file.name}`);
@@ -794,23 +794,29 @@ function EditorApp() {
 
   const duplicateSelected = () => {
     if (!selectedObject) return;
-    commit((current) => duplicateObjectById(current, selectedObject.id));
+    commitOperation({
+      type: "duplicateObject",
+      targetId: selectedObject.id,
+      payload: {
+        offset: { x: 2, y: 0, z: 2 },
+      },
+    });
   };
 
   const deleteSelected = () => {
     if (!selectedObject) return;
-    commit((current) => deleteObjectById(current, selectedObject.id));
+    commitOperation({ type: "removeObject", targetId: selectedObject.id });
     setSelectionObjectId(undefined);
   };
 
   const updateSelectedObject = (patch: Partial<WorldProject["objects"][number]>) => {
     if (!selectedObject) return;
-    commit((current) => patchObjectById(current, selectedObject.id, patch));
+    commitOperation({ type: "updateObject", targetId: selectedObject.id, payload: patch });
   };
 
   const updateSelectedAsset = (patch: Partial<AssetDefinition>) => {
     if (!selectedAsset) return;
-    commit((current) => patchAssetById(current, selectedAsset.id, patch));
+    commitOperation({ type: "updateAsset", targetId: selectedAsset.id, payload: patch });
   };
 
   const proofSaveAndReload = () => {
@@ -830,12 +836,16 @@ function EditorApp() {
 
   const updateActiveRoad = (patch: Partial<WorldProject["roads"][number]>) => {
     if (!activeRoad) return;
-    commit((current) => patchPathById(current, activeRoad.id, patch));
+    commitOperation({ type: "updateRoad", targetId: activeRoad.id, payload: patch });
   };
 
   const updateActiveRoadPoint = (pointIndex: number, patch: Partial<WorldProject["roads"][number]["points"][number]>) => {
     if (!activeRoad) return;
-    commit((current) => patchPathPointById(current, activeRoad.id, pointIndex, patch));
+    commitOperation({
+      type: "updateRoadPoint",
+      targetId: activeRoad.id,
+      payload: { index: pointIndex, point: { ...activeRoad.points[pointIndex], ...patch } },
+    });
   };
 
   const applyScatter = () => {
@@ -1467,10 +1477,11 @@ function EditorApp() {
             <div className="chip-row" style={{ marginTop: "0.5rem" }}>
               <button
                 onClick={() =>
-                  commit((current) => {
-                    const newRoad = {
+                  commitOperation({
+                    type: "addRoad",
+                    payload: {
                       id: crypto.randomUUID(),
-                      name: `Path ${current.roads.length + 1}`,
+                      name: `Path ${project.roads.length + 1}`,
                       points: [] as { x: number; y: number; z: number }[],
                       width: 4.5,
                       materialId: "track",
@@ -1478,15 +1489,7 @@ function EditorApp() {
                       smoothEdges: true,
                       closedLoop: false,
                       checkpointIds: [] as string[],
-                    };
-                    const updatedRoads = [...current.roads, newRoad];
-                    const terrainPatch = flattenPathTerrain(current.terrain, updatedRoads);
-                    return {
-                      ...current,
-                      updatedAt: new Date().toISOString(),
-                      roads: updatedRoads,
-                      terrain: terrainPatch,
-                    };
+                    },
                   })
                 }
               >
@@ -1494,19 +1497,15 @@ function EditorApp() {
               </button>
               <button
                 onClick={() =>
-                  commit((current) => ({
-                    ...current,
-                    updatedAt: new Date().toISOString(),
-                    markers: [
-                      ...current.markers,
-                      {
-                        id: crypto.randomUUID(),
-                        type: "start-finish",
-                        name: "Start / Finish",
-                        position: activeRoad?.points[0] ?? { x: 0, y: 0, z: 0 },
-                      },
-                    ],
-                  }))
+                  commitOperation({
+                    type: "addMarker",
+                    payload: {
+                      id: crypto.randomUUID(),
+                      type: "start-finish",
+                      name: "Start / Finish",
+                      position: activeRoad?.points[0] ?? { x: 0, y: 0, z: 0 },
+                    },
+                  })
                 }
               >
                 Add Start/Finish
@@ -1580,6 +1579,7 @@ function EditorApp() {
               setBrush((current) => ({ ...current, flattenHeight: project.terrain.heights[cell.z * project.terrain.resolution + cell.x] ?? 0 }));
             }}
             onProjectChange={commit}
+            onWorldOperations={commitOperations}
             onStatus={setStatusMessage}
             onStats={setViewportStats}
           />
@@ -1755,24 +1755,12 @@ function EditorApp() {
                   <div className="muted">{layer.visible ? "Visible" : "Hidden"} · {layer.locked ? "Locked" : "Unlocked"}</div>
                   <div className="chip-row">
                     <button
-                      onClick={() =>
-                        commit((current) => ({
-                          ...current,
-                          updatedAt: new Date().toISOString(),
-                          layers: current.layers.map((entry) => (entry.id === layer.id ? { ...entry, visible: !entry.visible } : entry)),
-                        }))
-                      }
+                      onClick={() => commitOperation({ type: "setLayerVisibility", targetId: layer.id, payload: { visible: !layer.visible } })}
                     >
                       {layer.visible ? "Hide" : "Show"}
                     </button>
                     <button
-                      onClick={() =>
-                        commit((current) => ({
-                          ...current,
-                          updatedAt: new Date().toISOString(),
-                          layers: current.layers.map((entry) => (entry.id === layer.id ? { ...entry, locked: !entry.locked } : entry)),
-                        }))
-                      }
+                      onClick={() => commitOperation({ type: "setLayerLocked", targetId: layer.id, payload: { locked: !layer.locked } })}
                     >
                       {layer.locked ? "Unlock" : "Lock"}
                     </button>

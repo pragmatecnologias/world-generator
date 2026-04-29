@@ -14,6 +14,7 @@ import type {
   TerrainData,
   WorldProject,
 } from "../types";
+import type { WorldOperation } from "../core/worldDocument";
 import {
   applyTerrainBrush,
   createTerrainGeometry,
@@ -58,6 +59,7 @@ type Props = {
   onSelectObject: (id?: string) => void;
   onSelectTerrainCell: (cell?: { x: number; z: number }) => void;
   onProjectChange: (updater: (project: WorldProject) => WorldProject) => void;
+  onWorldOperations?: (operations: WorldOperation[]) => void;
   onStatus: (message: string) => void;
   onStats?: (stats: { fps: number; drawCalls: number; sceneObjects: number }) => void;
 };
@@ -193,6 +195,7 @@ export default function ThreeViewport({
   onSelectObject,
   onSelectTerrainCell,
   onProjectChange,
+  onWorldOperations,
   onStatus,
   onStats,
 }: Props) {
@@ -504,11 +507,14 @@ export default function ThreeViewport({
         locked: false,
         collisionEnabled: true,
       };
-      onProjectChange((current) => ({
-        ...current,
-        updatedAt: new Date().toISOString(),
-        objects: [...current.objects, object],
-      }));
+      onWorldOperations?.([{ type: "addObject", payload: object }]);
+      if (!onWorldOperations) {
+        onProjectChange((current) => ({
+          ...current,
+          updatedAt: new Date().toISOString(),
+          objects: [...current.objects, object],
+        }));
+      }
       onSelectObject(object.id);
       onStatus(`Placed ${asset.name}`);
     };
@@ -521,6 +527,11 @@ export default function ThreeViewport({
       if (foliageSettings.slopeLimit > 0 && terrainSlopeAt(point, terrain) > foliageSettings.slopeLimit) return;
 
       if (foliageSettings.eraseMode) {
+        const removeIds = project.foliageGroups.flatMap((group) => group.instances.filter((instance) => {
+          const dx = instance.position.x - point.x;
+          const dz = instance.position.z - point.z;
+          return Math.hypot(dx, dz) <= Math.max(0.8, brush.size * 0.45);
+        }).map((instance) => instance.id));
         onProjectChange((current) => ({
           ...current,
           updatedAt: new Date().toISOString(),
@@ -560,6 +571,10 @@ export default function ThreeViewport({
       }).filter(Boolean);
 
       if (newInstances.length === 0) return;
+      const targetGroup = project.foliageGroups[0];
+      if (targetGroup) {
+        onWorldOperations?.([{ type: "addFoliageInstances", targetId: targetGroup.id, payload: newInstances as typeof targetGroup.instances }]);
+      }
       onProjectChange((current) => ({
         ...current,
         updatedAt: new Date().toISOString(),
@@ -576,6 +591,19 @@ export default function ThreeViewport({
       if (activeTool === "terrain-smooth") mode = "smooth";
       if (activeTool === "terrain-flatten") mode = "flatten";
       if (activeTool === "terrain-paint") mode = "paint";
+      const payload = {
+        center: { x: point.x, z: point.z },
+        radius: brush.size,
+        strength: brush.strength,
+        falloff: brush.falloff,
+        materialId: brush.materialId,
+        flattenHeight: brush.flattenHeight,
+      } as const;
+      onWorldOperations?.([
+        mode === "paint"
+          ? { type: "applyTerrainMaterialPatch", payload: { materialId: brush.materialId, center: payload.center, radius: payload.radius, strength: payload.strength, falloff: payload.falloff } }
+          : { type: "applyTerrainHeightPatch", payload: { mode, center: payload.center, radius: payload.radius, strength: payload.strength, falloff: payload.falloff, flattenHeight: payload.flattenHeight } },
+      ]);
       const nextTerrain = applyTerrainBrush(
         terrain,
         point,
@@ -605,6 +633,7 @@ export default function ThreeViewport({
         },
         "flatten",
       );
+      onWorldOperations?.([{ type: "applyTerrainHeightPatch", payload: { mode: "flatten", center: { x: center.x, z: center.z }, radius: path.width * 0.6, strength: 1, falloff: "smooth", flattenHeight: center.y } }]);
       onProjectChange((current) => ({
         ...current,
         updatedAt: new Date().toISOString(),
@@ -669,6 +698,7 @@ export default function ThreeViewport({
         const point = terrainHit.point;
         const path = project.roads[project.roads.length - 1];
         if (path) {
+          onWorldOperations?.([{ type: "addRoadPoint", targetId: path.id, payload: { x: point.x, y: point.y, z: point.z } }]);
           onProjectChange((current) => ({
             ...current,
             updatedAt: new Date().toISOString(),
@@ -685,6 +715,22 @@ export default function ThreeViewport({
         const point = terrainHit.point;
         const zone = project.scatterZones[project.scatterZones.length - 1];
         if (!zone || zone.points.length >= 2) {
+          onWorldOperations?.([{ type: "addScatterZone", payload: {
+            id: crypto.randomUUID(),
+            name: `Scatter ${project.scatterZones.length + 1}`,
+            shape: "rectangle",
+            points: [{ x: point.x, y: point.y, z: point.z }],
+            assetIds: selectedAssetId ? [selectedAssetId] : project.assets.filter((asset) => asset.canPaint).slice(0, 3).map((asset) => asset.id),
+            settings: {
+              count: scatterSettings.count,
+              minSpacing: scatterSettings.minSpacing,
+              randomScaleMin: scatterSettings.randomScaleMin,
+              randomScaleMax: scatterSettings.randomScaleMax,
+              randomRotation: scatterSettings.randomRotation,
+              slopeLimit: scatterSettings.slopeLimit,
+            },
+            generatedObjectIds: [],
+          } }]);
           onProjectChange((current) => ({
             ...current,
             updatedAt: new Date().toISOString(),
@@ -709,6 +755,7 @@ export default function ThreeViewport({
             ],
           }));
         } else {
+          onWorldOperations?.([{ type: "updateScatterZone", targetId: zone.id, payload: { points: [...zone.points, { x: point.x, y: point.y, z: point.z }] } }]);
           onProjectChange((current) => ({
             ...current,
             updatedAt: new Date().toISOString(),

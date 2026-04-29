@@ -300,6 +300,14 @@ function attachLegacyAliases<T extends WorldDocument>(document: T): T {
 }
 
 
+export function createWorldOperation(project: WorldProject): WorldOperation {
+  return { type: "createWorld", payload: worldProjectToDocument(project) };
+}
+
+export function applyWorldOperations(document: WorldDocument, operations: WorldOperation[]): WorldDocument {
+  return operations.reduce((state, operation) => applyWorldOperation(state, operation), document);
+}
+
 export function applyWorldOperation(document: WorldDocument, operation: WorldOperation): WorldDocument {
   const next = structuredClone(document);
   const touch = () => {

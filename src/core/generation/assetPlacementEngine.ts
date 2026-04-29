@@ -2,6 +2,7 @@ import type { AssetDefinition, PlacedObject, TerrainData, Vector3Data } from "..
 import type { WorldGenerationConfig } from "../schema/WorldConfigSchema";
 import { isSpacingClear } from "../rules/placementRules";
 import { terrainSlopeAt } from "../../viewport/terrain";
+import { classifyAsset } from "../assets/assetRegistry";
 import * as THREE from "three";
 
 function selectAssetByTags(assets: AssetDefinition[], tags: string[], fallbackIndex: number) {
@@ -31,8 +32,11 @@ export function placeAssetsForWorld(
   config: WorldGenerationConfig,
   roads: { points: { x: number; y: number; z: number }[]; width: number }[],
 ) {
-  const props = assets.filter((asset) => !asset.canPaint || asset.category.toLowerCase().includes("prop") || asset.tags.includes("rock"));
-  const foliage = assets.filter((asset) => asset.canPaint || asset.tags.some((tag) => /tree|foliage|bush/i.test(tag)));
+  const props = assets.filter((asset) => {
+    const role = classifyAsset(asset);
+    return role === "rock" || role === "barrier" || role === "prop" || asset.category.toLowerCase().includes("track");
+  });
+  const foliage = assets.filter((asset) => classifyAsset(asset) === "foliage");
   const primary = props[0] ?? assets[0];
   const placements: PlacedObject[] = [];
   const existing: Vector3Data[] = [];
@@ -66,4 +70,3 @@ export function placeAssetsForWorld(
 
   return placements;
 }
-

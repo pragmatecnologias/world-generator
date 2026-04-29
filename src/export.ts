@@ -1,5 +1,5 @@
 import type { WorldExportPackage, WorldProject } from "./types";
-import { worldDocumentToProject, worldProjectToDocument, type WorldDocument } from "./core/worldDocument";
+import { normalizeWorldDocument, worldDocumentToProject, worldProjectToDocument, type WorldDocument } from "./core/worldDocument";
 import { buildAssetRegistry } from "./core/assets/assetRegistry";
 
 export const WORLD_EXPORT_SCHEMA_VERSION = "1.0.0";
@@ -119,14 +119,14 @@ export function exportWorld(project: WorldProject) {
 }
 
 export function saveProjectToStorage(project: WorldProject) {
-  localStorage.setItem("world-generator.project", JSON.stringify(project, jsonReplacer));
+  localStorage.setItem("world-generator.project", JSON.stringify(worldProjectToDocument(project), jsonReplacer));
 }
 
 export function loadProjectFromStorage(): WorldProject | null {
   const raw = localStorage.getItem("world-generator.project");
   if (!raw) return null;
   try {
-    return JSON.parse(raw, jsonReviver) as WorldProject;
+    return resolveWorldProjectPayload(JSON.parse(raw, jsonReviver));
   } catch {
     return null;
   }
@@ -150,7 +150,7 @@ export function parseWorldPayload(raw: string): WorldProject | WorldExportPackag
   }
 }
 
-export function resolveWorldProject(payload: WorldProject | WorldExportPackage): WorldProject {
+export function resolveWorldProject(payload: WorldProject | WorldExportPackage | WorldDocument): WorldProject {
   if ("packageType" in payload && payload.packageType === "world-export") {
     if (payload.worldDocument) {
       try {
@@ -161,7 +161,48 @@ export function resolveWorldProject(payload: WorldProject | WorldExportPackage):
     }
     return payload.project;
   }
+  if ("schemaVersion" in payload && isWorldDocumentPayload(payload)) {
+    return worldDocumentToProject(normalizeWorldDocument(payload as WorldDocument));
+  }
   return payload as WorldProject;
+}
+
+export function resolveWorldProjectPayload(payload: unknown): WorldProject | null {
+  if (!payload || typeof payload !== "object") return null;
+  if (isWorldExportPackage(payload)) return resolveWorldProject(payload);
+  if (isWorldDocumentPayload(payload)) return resolveWorldProject(payload as WorldDocument);
+  if (isWorldProjectPayload(payload)) return payload as WorldProject;
+  return null;
+}
+
+function isWorldExportPackage(payload: unknown): payload is WorldExportPackage {
+  return Boolean(payload && typeof payload === "object" && "packageType" in payload && (payload as WorldExportPackage).packageType === "world-export");
+}
+
+function isWorldDocumentPayload(payload: unknown): payload is WorldDocument {
+  return Boolean(
+    payload
+    && typeof payload === "object"
+    && "schemaVersion" in payload
+    && "project" in payload
+    && "terrain" in payload
+    && ("paths" in payload || "roads" in payload),
+  );
+}
+
+function isWorldProjectPayload(payload: unknown): payload is WorldProject {
+  return Boolean(
+    payload
+    && typeof payload === "object"
+    && "terrain" in payload
+    && "materials" in payload
+    && "assets" in payload
+    && "roads" in payload
+    && "foliageGroups" in payload
+    && "scatterZones" in payload
+    && "markers" in payload
+    && "layers" in payload,
+  );
 }
 
 export function validateExportPackage(payload: WorldExportPackage): { valid: boolean; errors: string[] } {

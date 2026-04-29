@@ -27,6 +27,8 @@ export type {
 } from "../../worldDocument";
 export {
   WORLD_DOCUMENT_SCHEMA_VERSION,
+  applyWorldOperations,
+  createWorldOperation,
   normalizeWorldDocument,
   worldDocumentToPlacementGroups,
   worldDocumentToPaths,
