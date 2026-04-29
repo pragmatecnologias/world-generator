@@ -13,7 +13,7 @@ import type {
 } from "./types";
 import { buildWorldExportPackage, exportWorld, loadProjectFromStorage, parseWorldPayload, resolveWorldProject, saveProjectToStorage, validateExportPackage } from "./core/export";
 import { validateProject } from "./core/validation";
-import { applyTerrainBrush, flattenRoadTerrain, isPointNearRoad, terrainIndex, terrainSlopeAt, terrainWorldToGrid } from "./viewport/terrain";
+import { flattenRoadTerrain, terrainSlopeAt, terrainWorldToGrid } from "./viewport/terrain";
 import PreviewApp from "./PreviewApp";
 import { generateWorld } from "./core/generation/generateWorld";
 import { createSeededRng, hashString } from "./core/generation/random";
@@ -25,6 +25,16 @@ import type { WorldPatch } from "./core/ai/worldPatchSchema";
 import { applyAiWorldCommand } from "./core/ai/applyAiWorldCommand";
 import type { AiWorldCommand } from "./core/ai/aiWorldCommandSchema";
 import { validateAiWorldCommand } from "./core/ai/aiWorldCommandValidator";
+import {
+  applyScatterZoneToProject,
+  buildAutoJsonProofProject,
+  buildAutoAssetProofProject,
+  buildAutoFullScenarioProject,
+  clearFoliageAroundRoads as clearFoliageAroundRoadsCore,
+  createProofPreviewHash,
+  generateProofTerrain,
+} from "./core/generation/editorWorkflows";
+import { runProofRun } from "./core/validation/proofRunner";
 import {
   applyWorldOperation,
   validateWorldDocumentIntegrity,
@@ -531,108 +541,7 @@ function EditorApp() {
   };
 
   const runAutoJsonProofScenario = () => {
-    const ops: WorldOperation[] = [
-      {
-        type: "addObject",
-        payload: {
-          id: "obj-rock-ai-001",
-          assetId: "demo-rock",
-          name: "AI Rock 1",
-          position: { x: -4, y: 0.6, z: 10 },
-          rotation: { x: 0, y: 1.2, z: 0 },
-          scale: { x: 1.2, y: 1.2, z: 1.2 },
-          layerId: "layer-props",
-          visible: true,
-          locked: false,
-          collisionEnabled: true,
-        },
-      },
-      {
-        type: "updateRoad",
-        targetId: "road-demo",
-        payload: { width: 10, flattenTerrain: true, smoothEdges: true },
-      },
-      {
-        type: "addFoliageGroup",
-        payload: {
-          id: "foliage-ai-forest-001",
-          name: "AI Forest Zone",
-          assetIds: ["demo-tree"],
-          instances: [
-            { id: "foliage-ai-001", assetId: "demo-tree", position: { x: 18, y: 0.5, z: -14 }, rotation: { x: 0, y: 1.1, z: 0 }, scale: { x: 1.15, y: 1.15, z: 1.15 } },
-            { id: "foliage-ai-002", assetId: "demo-tree", position: { x: 21, y: 0.55, z: -16 }, rotation: { x: 0, y: 2.4, z: 0 }, scale: { x: 0.95, y: 0.95, z: 0.95 } },
-          ],
-          settings: {
-            density: 8,
-            minSpacing: 2.8,
-            randomScaleMin: 0.8,
-            randomScaleMax: 1.3,
-            randomRotation: true,
-            slopeLimit: 35,
-            avoidRoads: true,
-            eraseMode: false,
-          },
-        },
-      },
-      {
-        type: "applyTerrainMaterialPatch",
-        payload: {
-          materialId: "mud",
-          center: { x: 6, z: 14 },
-          radius: 8,
-          strength: 0.9,
-          falloff: "smooth",
-        },
-      },
-      {
-        type: "applyTerrainHeightPatch",
-        payload: {
-          mode: "flatten",
-          center: { x: 0, z: 8 },
-          radius: 12,
-          strength: 1,
-          falloff: "smooth",
-          flattenHeight: 0.4,
-        },
-      },
-      {
-        type: "addMarker",
-        payload: {
-          id: "checkpoint-001",
-          type: "checkpoint",
-          name: "Checkpoint 1",
-          position: { x: -8, y: 0.4, z: 18 },
-          rotation: { x: 0, y: 0, z: 0 },
-          radius: 8,
-          metadata: { order: 1 },
-        },
-      },
-      {
-        type: "addMarker",
-        payload: {
-          id: "checkpoint-002",
-          type: "checkpoint",
-          name: "Checkpoint 2",
-          position: { x: 6, y: 0.4, z: 16 },
-          rotation: { x: 0, y: 0, z: 0 },
-          radius: 8,
-          metadata: { order: 2 },
-        },
-      },
-      {
-        type: "updateEnvironment",
-        payload: {
-          timeOfDay: "evening",
-          backgroundColor: "#f29a5f",
-          fogColor: "#e3b48a",
-          sunIntensity: 1.4,
-          ambientIntensity: 0.55,
-        },
-      },
-    ];
-    let nextDocument = worldDocument;
-    for (const operation of ops) nextDocument = applyWorldOperation(nextDocument, operation);
-    applyWorldDocument(nextDocument, "Auto JSON proof scenario applied");
+    applyWorldDocument(buildAutoJsonProofProject(worldDocument), "Auto JSON proof scenario applied");
     proofSaveAndReload();
     onExport();
     setBottomTab("validation");
@@ -647,26 +556,8 @@ function EditorApp() {
       const imported = await importAssetFromUrl("/test-assets/simple-triangle.gltf", "simple-triangle.gltf");
       if (!imported) throw new Error("Imported test asset returned null");
       const current = projectRef.current;
-      const next = {
-        ...current,
-        updatedAt: new Date().toISOString(),
-        assets: current.assets.some((asset) => asset.id === imported.id) ? current.assets : [...current.assets, imported],
-        objects: [
-          ...current.objects,
-          {
-            id: "obj-imported-gltf-proof",
-            assetId: imported.id,
-            name: "Imported GLTF Proof",
-            position: { x: -8, y: 0.8, z: 4 },
-            rotation: { x: 0, y: 1.1, z: 0 },
-            scale: { x: 1.4, y: 1.4, z: 1.4 },
-            layerId: "layer-props",
-            visible: true,
-            locked: false,
-            collisionEnabled: true,
-          },
-        ],
-      };
+      const built = buildAutoAssetProofProject(current, imported.id, imported.name);
+      const next = built.next.assets.some((asset) => asset.id === imported.id) ? built.next : { ...built.next, assets: [...built.next.assets, imported] };
       setProject(next);
       setHistory((stack) => [...stack, current].slice(-50));
       setFuture([]);
@@ -678,7 +569,7 @@ function EditorApp() {
       exportWorld(next);
       setProject(loadProjectFromStorage() ?? next);
       setPreviewConfirmed(true);
-      setJsonStatus("Auto asset proof applied imported GLTF, placed object, saved, exported, and preview-ready");
+      setJsonStatus(built.status);
       setOperationHistory((current) => [
         ...current.slice(-49),
         `${new Date().toISOString()} :: ran deterministic auto asset proof`,
@@ -1128,115 +1019,32 @@ function EditorApp() {
   };
 
   const generateTerrainMacro = () => {
-    const center = new THREE.Vector3(0, 0, 0);
-    const hillA = applyTerrainBrush(project.terrain, new THREE.Vector3(-12, 0, -8), { ...brush, size: 8, strength: 0.7 }, "raise");
-    const valley = applyTerrainBrush(hillA, new THREE.Vector3(12, 0, 10), { ...brush, size: 7, strength: 0.6 }, "lower");
-    const flatten = applyTerrainBrush(valley, center, { ...brush, size: 9, strength: 1, flattenHeight: 0.6 }, "flatten");
-    let terrainNext = flatten;
-    const patches: Array<{ position: THREE.Vector3; material: string; size: number }> = [
-      { position: new THREE.Vector3(-18, 0, 14), material: "grass", size: 9 },
-      { position: new THREE.Vector3(14, 0, -16), material: "dirt", size: 7 },
-      { position: new THREE.Vector3(-4, 0, 18), material: "mud", size: 6 },
-      { position: new THREE.Vector3(16, 0, 16), material: "rock", size: 7 },
-      { position: new THREE.Vector3(-20, 0, -18), material: "sand", size: 8 },
-      { position: new THREE.Vector3(0, 0, 0), material: "track", size: 4 },
-    ];
-    for (const patch of patches) {
-      terrainNext = applyTerrainBrush(
-        terrainNext,
-        patch.position,
-        { ...brush, size: patch.size, strength: 0.95, materialId: patch.material, falloff: "smooth" },
-        "paint",
-      );
-    }
     commit((current) => ({
       ...current,
       updatedAt: new Date().toISOString(),
-      terrain: terrainNext,
+      terrain: generateProofTerrain(current.terrain, brush),
     }));
     setStatusMessage("Applied terrain macro: hill, valley, flatten zone, organic material patches");
   };
 
   const clearFoliageAroundRoads = () => {
-    commit((current) => ({
-      ...current,
-      updatedAt: new Date().toISOString(),
-      foliageGroups: current.foliageGroups.map((group) => ({
-        ...group,
-        instances: group.instances.filter((instance) => !isPointNearRoad(new THREE.Vector3(instance.position.x, instance.position.y, instance.position.z), current.roads)),
-      })),
-    }));
+    commit((current) => clearFoliageAroundRoadsCore(current));
     setStatusMessage("Cleared foliage around roads");
   };
 
   const runProof = () => {
-    const startedAt = new Date().toISOString();
-    const currentProject = projectRef.current;
-    const preHash = stableHash(currentProject);
-    const exportPackage = buildWorldExportPackage(currentProject);
-    const exportValidation = validateExportPackage(exportPackage);
-    const persisted = Boolean(loadProjectFromStorage());
-    const foliageCount = currentProject.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0);
-    const customAssetReady = currentProject.assets.some((asset) => Boolean(asset.fileDataUrl) && asset.filePath !== "built-in");
-    const roadHasCurve = currentProject.roads.some((road) => road.points.length >= 3 && road.id !== "road-demo");
-    const checkpoints = currentProject.markers.filter((marker) => marker.type === "checkpoint").length;
-    const userPlacedObjects = currentProject.objects.filter((object) => !object.id.startsWith("obj-demo")).length;
-    const scatterGenerated = currentProject.scatterZones.reduce((sum, zone) => sum + zone.generatedObjectIds.length, 0);
-    const localValidation = validateProject(currentProject, {
-      strictMode: strictValidationMode,
-      persisted,
-      exportValid: exportValidation.valid,
-      previewRendered: previewConfirmedRef.current,
-      artifactRefs: [],
+    const next = runProofRun(projectRef.current, {
+      strictValidationMode,
+      persisted: Boolean(loadProjectFromStorage()),
+      previewConfirmed: previewConfirmedRef.current,
     });
-    const validationStrictPass = localValidation.every((entry) => entry.status === "REAL");
-    const step = (id: string, label: string, pass: boolean, subsystem: ProofStepResult["subsystem"], reason: string): ProofStepResult => ({
-      id,
-      label,
-      status: pass ? "PASS" : "FAIL",
-      subsystem,
-      reason,
-      screenshotId: `${id}-${Date.now()}`,
-      preHash,
-      postHash: stableHash(project),
-    });
-    const steps: ProofStepResult[] = [
-      step("terrain-edited", "Terrain sculpted and painted", new Set(currentProject.terrain.materialMap).size >= 4 && stableHash(currentProject.terrain.heights) !== stableHash(createDefaultProject().terrain.heights), "terrain", "Terrain must differ from starter and include diverse materials"),
-      step("asset-import", "Custom asset imported", customAssetReady, "assets", "Needs imported GLB/GLTF source data"),
-      step("object-flow", "Manual placement + transform flow", userPlacedObjects >= 1, "objects", "Needs at least one user-placed object"),
-      step("foliage-flow", "Foliage paint/erase flow", foliageCount >= 50, "foliage", "Needs meaningful foliage density"),
-      step("scatter-flow", "Scatter generation flow", scatterGenerated >= 20, "scatter", "Needs applied scatter output"),
-      step("road-flow", "Road draw/edit flow", roadHasCurve, "roads", "Needs drawn/edited road points"),
-      step("marker-flow", "Start/finish + checkpoints", currentProject.markers.some((marker) => marker.type === "start-finish") && checkpoints >= 3, "markers", "Needs race markers"),
-      step("save-reload", "Save/reload persistence", persisted, "save-load", "Project should be saved in local storage"),
-      step("export-valid", "Export contract validity", exportValidation.valid, "export", exportValidation.valid ? "Export package valid" : exportValidation.errors.join(", ")),
-      step("preview-proof", "Preview runtime confirmed", previewConfirmedRef.current, "preview", "Use Open Preview (strict) + confirm"),
-      step("validation-chain", "Validation chain checks", validationStrictPass, "validation", "Validation should satisfy strict REAL chain"),
-    ];
-    const passCount = steps.filter((item) => item.status === "PASS").length;
-    const failCount = steps.filter((item) => item.status === "FAIL").length;
-    const next: ProofRunResult = {
-      id: crypto.randomUUID(),
-      strictMode: strictValidationMode,
-      startedAt,
-      completedAt: new Date().toISOString(),
-      passCount,
-      failCount,
-      partialCount: 0,
-      steps,
-    };
     setProofRun(next);
     setBottomTab("validation");
-    setStatusMessage(`Proof run complete: ${passCount} passed, ${failCount} failed`);
+    setStatusMessage(`Proof run complete: ${next.passCount} passed, ${next.failCount} failed`);
   };
 
   const createPreviewProofPayload = () => {
-    const json = JSON.stringify(projectRef.current);
-    let hash = 0;
-    for (let i = 0; i < json.length; i += 1) {
-      hash = (hash * 31 + json.charCodeAt(i)) | 0;
-    }
-    const projectHash = `h${Math.abs(hash)}`;
+    const projectHash = createProofPreviewHash(projectRef.current);
     localStorage.setItem(
       "world-generator.preview-proof",
       JSON.stringify({
@@ -1254,166 +1062,15 @@ function EditorApp() {
       if (!importedAsset) {
         importedAsset = await importAssetFromUrl("/test-assets/simple-triangle.gltf", "simple-triangle.gltf");
       }
-
-      commit((current) => {
-        const baselineProject = createDefaultProject();
-        const terrainIsBaseline =
-          stableHash(current.terrain.heights) === stableHash(baselineProject.terrain.heights)
-          && stableHash(current.terrain.materialMap) === stableHash(baselineProject.terrain.materialMap);
-        let terrainNext = current.terrain;
-
-        if (terrainIsBaseline) {
-          const hillA = applyTerrainBrush(current.terrain, new THREE.Vector3(-12, 0, -8), { ...brush, size: 8, strength: 0.7 }, "raise");
-          const valley = applyTerrainBrush(hillA, new THREE.Vector3(12, 0, 10), { ...brush, size: 7, strength: 0.6 }, "lower");
-          const flatten = applyTerrainBrush(valley, new THREE.Vector3(0, 0, 0), { ...brush, size: 9, strength: 1, flattenHeight: 0.6 }, "flatten");
-          terrainNext = flatten;
-          const patches: Array<{ position: THREE.Vector3; material: string; size: number }> = [
-            { position: new THREE.Vector3(-18, 0, 14), material: "grass", size: 9 },
-            { position: new THREE.Vector3(14, 0, -16), material: "dirt", size: 7 },
-            { position: new THREE.Vector3(-4, 0, 18), material: "mud", size: 6 },
-            { position: new THREE.Vector3(16, 0, 16), material: "rock", size: 7 },
-            { position: new THREE.Vector3(-20, 0, -18), material: "sand", size: 8 },
-            { position: new THREE.Vector3(0, 0, 0), material: "track", size: 4 },
-          ];
-          for (const patch of patches) {
-            terrainNext = applyTerrainBrush(
-              terrainNext,
-              patch.position,
-              { ...brush, size: patch.size, strength: 0.95, materialId: patch.material, falloff: "smooth" },
-              "paint",
-            );
-          }
-        }
-
-        const customAsset = current.assets.find((asset) => Boolean(asset.fileDataUrl) && asset.filePath !== "built-in") ?? importedAsset ?? current.assets[0];
-        const newObject = customAsset
-          ? {
-              id: crypto.randomUUID(),
-              assetId: customAsset.id,
-              name: `${customAsset.name} Placed`,
-              position: { x: -6, y: 1, z: 6 },
-              rotation: { x: 0, y: 1.1, z: 0 },
-              scale: { x: 1.3, y: 1.3, z: 1.3 },
-              layerId: "layer-props",
-              visible: true,
-              locked: false,
-              collisionEnabled: true,
-            }
-          : null;
-
-        const foliageInstances = Array.from({ length: 55 }, (_, index) => {
-          const angle = (index / 55) * Math.PI * 2;
-          const radius = 10 + (index % 7) * 0.45;
-          const x = Math.cos(angle) * radius - 4;
-          const z = Math.sin(angle) * radius + 2;
-          const y = 0.8 + (index % 5) * 0.03;
-          const scale = 0.8 + (index % 6) * 0.08;
-          return {
-            id: crypto.randomUUID(),
-            assetId: "demo-tree",
-            position: { x, y, z },
-            rotation: { x: 0, y: angle, z: 0 },
-            scale: { x: scale, y: scale, z: scale },
-          };
-        });
-
-        const scatterZoneId = crypto.randomUUID();
-        const scatterObjects = Array.from({ length: 28 }, (_, index) => {
-          const x = -20 + (index % 7) * 2.5;
-          const z = -20 + Math.floor(index / 7) * 2.5;
-          const scale = 0.85 + (index % 4) * 0.2;
-          return {
-            id: crypto.randomUUID(),
-            assetId: "demo-rock",
-            name: `Scatter Rock ${index + 1}`,
-            position: { x, y: 0.7, z },
-            rotation: { x: 0, y: (index * 0.35) % (Math.PI * 2), z: 0 },
-            scale: { x: scale, y: scale, z: scale },
-            layerId: "layer-props",
-            visible: true,
-            locked: false,
-            collisionEnabled: false,
-          };
-        });
-
-        const roadId = crypto.randomUUID();
-        const roadPoints = [
-          { x: -26, y: 0.45, z: 14 },
-          { x: -12, y: 0.55, z: 24 },
-          { x: 6, y: 0.5, z: 20 },
-          { x: 20, y: 0.42, z: 6 },
-        ];
-        const checkpointIds = Array.from({ length: 3 }, () => crypto.randomUUID());
-        const checkpointMarkers = checkpointIds.map((id, idx) => ({
-          id,
-          type: "checkpoint" as const,
-          name: `Checkpoint ${idx + 1}`,
-          position: roadPoints[Math.min(idx + 1, roadPoints.length - 1)],
-        }));
-
-        const next = {
-          ...current,
-          updatedAt: new Date().toISOString(),
-          terrain: terrainNext,
-          objects: [...current.objects, ...(newObject ? [newObject] : []), ...scatterObjects],
-          foliageGroups: current.foliageGroups.map((group, index) =>
-            index === 0
-              ? {
-                  ...group,
-                  instances: [...group.instances, ...foliageInstances],
-                }
-              : group,
-          ),
-          scatterZones: [
-            ...current.scatterZones,
-            {
-              id: scatterZoneId,
-              name: `Scatter ${current.scatterZones.length + 1}`,
-              shape: "rectangle" as const,
-              points: [
-                { x: -20, y: 0.5, z: -20 },
-                { x: -5, y: 0.5, z: -7 },
-              ],
-              assetIds: ["demo-rock"],
-              settings: {
-                count: 28,
-                minSpacing: 1.8,
-                randomScaleMin: 0.8,
-                randomScaleMax: 1.5,
-                randomRotation: true,
-                slopeLimit: 40,
-              },
-              generatedObjectIds: scatterObjects.map((entry) => entry.id),
-            },
-          ],
-          roads: [
-            ...current.roads,
-            {
-              id: roadId,
-              name: `Road ${current.roads.length + 1}`,
-              points: roadPoints,
-              width: 5.3,
-              materialId: "track",
-              flattenTerrain: true,
-              smoothEdges: true,
-              closedLoop: false,
-              checkpointIds,
-            },
-          ],
-          markers: [
-            ...current.markers,
-            {
-              id: crypto.randomUUID(),
-              type: "start-finish" as const,
-              name: "Auto Start / Finish",
-              position: roadPoints[0],
-            },
-            ...checkpointMarkers,
-          ],
-        };
-        saveProjectToStorage(next);
-        return next;
-      });
+      const next = buildAutoFullScenarioProject(projectRef.current, importedAsset?.id);
+      setProject(next);
+      setHistory((stack) => [...stack, projectRef.current].slice(-50));
+      setFuture([]);
+      saveProjectToStorage(next);
+      lastSavedHashRef.current = stableHash(next);
+      setHasUnsavedChanges(false);
+      setSelectedAssetId(importedAsset?.id ?? next.assets[0]?.id);
+      setSelectionObjectId(next.objects[next.objects.length - 1]?.id ?? next.objects[0]?.id);
       setStatusMessage("Auto full scenario applied (terrain, objects, foliage, scatter, roads, markers)");
       setOperationHistory((current) => [
         ...current.slice(-49),
@@ -1437,7 +1094,8 @@ function EditorApp() {
     }
     if (params.get("autoTerrainMacro") === "1" && !autoRunRef.current.terrain) {
       autoRunRef.current.terrain = true;
-      generateTerrainMacro();
+      commit((current) => ({ ...current, terrain: generateProofTerrain(current.terrain, brush), updatedAt: new Date().toISOString() }));
+      setStatusMessage("Applied terrain macro: hill, valley, flatten zone, organic material patches");
     }
     if (params.get("autoloadTestAsset") === "1" && !autoRunRef.current.asset) {
       autoRunRef.current.asset = true;
@@ -1471,7 +1129,7 @@ function EditorApp() {
     if (params.get("autoPreviewProof") === "1") {
       const finishPreviewProof = () => {
         onExport();
-        const hash = createPreviewProofPayload();
+        const hash = createProofPreviewHash(projectRef.current);
         setPreviewConfirmed(true);
         setStatusMessage(`Auto preview proof confirmed (${hash})`);
       };
@@ -1489,7 +1147,7 @@ function EditorApp() {
         void runAutoAssetProofScenario();
       }, 300);
     }
-  }, [applyGenerationConfigDraft, generateTerrainMacro, handleLoadTestAsset, runProof, runAutoJsonProofScenario, runAutoAssetProofScenario]);
+  }, [applyGenerationConfigDraft, handleLoadTestAsset, runProof, runAutoJsonProofScenario, runAutoAssetProofScenario]);
 
   const commandItems = useMemo<CommandItem[]>(() => {
     const toolItems: CommandItem[] = terrainTools.map((tool) => ({

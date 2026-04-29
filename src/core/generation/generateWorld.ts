@@ -1,6 +1,6 @@
 import { createDefaultProject } from "../../defaultProject";
 import type { LayerDefinition, WorldProject } from "../../types";
-import { flattenRoadsIntoTerrain, generateTerrain } from "./terrainGenerator";
+import { applyRoadSurfaceTreatment, flattenRoadsIntoTerrain, generateTerrain } from "./terrainGenerator";
 import { generateRoads } from "./roadGenerator";
 import { placeAssetsForWorld } from "./assetPlacementEngine";
 import { generateFoliageGroups } from "./foliageGenerator";
@@ -23,7 +23,7 @@ export function generateWorld(config: WorldGenerationConfig): WorldProject {
   const base = createDefaultProject();
   const terrain = generateTerrain(config);
   const roads = generateRoads(config, terrain);
-  const flattenedTerrain = flattenRoadsIntoTerrain(terrain, roads);
+  const flattenedTerrain = applyRoadSurfaceTreatment(flattenRoadsIntoTerrain(terrain, roads), roads, config.seed, config.theme);
   const project: WorldProject = {
     ...base,
     id: `generated-${config.seed}`,

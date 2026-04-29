@@ -214,7 +214,7 @@ export function isPointNearRoad(point: THREE.Vector3, roads: { points: { x: numb
 
 export function flattenRoadTerrain(
   terrain: TerrainData,
-  roads: { points: { x: number; y: number; z: number }[]; width: number; flattenTerrain: boolean }[],
+  roads: { points: { x: number; y: number; z: number }[]; width: number; flattenTerrain: boolean; closedLoop?: boolean }[],
 ): TerrainData {
   const next = structuredClone(terrain);
   const resolution = terrain.resolution;
@@ -225,9 +225,11 @@ export function flattenRoadTerrain(
     if (!road.flattenTerrain || road.points.length < 2) continue;
     const halfWidth = road.width / 2;
 
-    for (let i = 0; i < road.points.length - 1; i += 1) {
+    const segmentCount = road.closedLoop ? road.points.length : road.points.length - 1;
+    for (let i = 0; i < segmentCount; i += 1) {
       const start = new THREE.Vector3(road.points[i].x, road.points[i].y, road.points[i].z);
-      const end = new THREE.Vector3(road.points[i + 1].x, road.points[i + 1].y, road.points[i + 1].z);
+      const nextPoint = road.points[(i + 1) % road.points.length];
+      const end = new THREE.Vector3(nextPoint.x, nextPoint.y, nextPoint.z);
 
       // Compute terrain grid bounds for this segment
       const minX = Math.max(0, Math.min(terrain.resolution - 1, Math.floor(((Math.min(start.x, end.x) - halfWidth + halfW) / terrain.width) * (resolution - 1))));

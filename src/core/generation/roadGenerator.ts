@@ -20,9 +20,9 @@ export function generateRoads(config: WorldGenerationConfig, terrain: TerrainDat
   const halfD = terrain.depth / 2;
   return config.roads.map((roadConfig, index) => {
     const points = [];
-    const pointCount = Math.max(3, roadConfig.complexity);
-    const radiusX = terrain.width * (roadConfig.type === "loop" ? 0.22 : 0.34);
-    const radiusZ = terrain.depth * (roadConfig.type === "loop" ? 0.18 : 0.24);
+    const pointCount = Math.max(roadConfig.type === "loop" ? 8 : 5, roadConfig.complexity);
+    const radiusX = terrain.width * (roadConfig.type === "loop" ? 0.28 : 0.34);
+    const radiusZ = terrain.depth * (roadConfig.type === "loop" ? 0.22 : 0.24);
     const centerX = roadConfig.type === "loop" ? 0 : -halfW * 0.28;
     const centerZ = roadConfig.type === "loop" ? 0 : 0;
 
@@ -30,11 +30,13 @@ export function generateRoads(config: WorldGenerationConfig, terrain: TerrainDat
       const t = pointCount === 1 ? 0 : i / (pointCount - 1);
       const angle = roadConfig.type === "loop"
         ? t * Math.PI * 2
-        : -Math.PI * 0.7 + t * Math.PI * 1.35;
-      const wobble = 0.75 + rng() * 0.25;
-      const x = centerX + Math.cos(angle) * radiusX * wobble;
-      const z = centerZ + Math.sin(angle) * radiusZ * wobble;
-      const y = (Math.sin(angle * 2 + config.seed * 0.01) * 0.15) + (roadConfig.type === "loop" ? 0.1 : 0.2);
+        : -Math.PI * 0.65 + t * Math.PI * 1.3;
+      const wobble = roadConfig.type === "loop"
+        ? 0.78 + Math.sin(angle * 3 + config.seed * 0.03) * 0.12 + rng() * 0.08
+        : 0.72 + Math.sin(angle * 2.2 + config.seed * 0.02) * 0.1 + rng() * 0.16;
+      const x = centerX + Math.cos(angle) * radiusX * wobble + (roadConfig.type === "trail" ? Math.sin(t * Math.PI * 3) * terrain.width * 0.05 : 0);
+      const z = centerZ + Math.sin(angle) * radiusZ * wobble + (roadConfig.type === "trail" ? Math.cos(t * Math.PI * 2.4) * terrain.depth * 0.035 : 0);
+      const y = (Math.sin(angle * 2 + config.seed * 0.01) * 0.15) + (roadConfig.type === "loop" ? 0.1 : 0.2) + (roadConfig.type === "trail" ? t * 0.4 : 0);
       points.push(makePoint(x, y, z));
     }
 
@@ -54,4 +56,3 @@ export function generateRoads(config: WorldGenerationConfig, terrain: TerrainDat
     };
   });
 }
-

@@ -25,9 +25,12 @@ export function generateFoliageGroups(project: WorldProject, config: WorldGenera
 
     const instances = [];
     const count = Math.max(6, Math.round(config.terrain.width * biome.density * 0.12));
+    const edgeBias = /rock/i.test(biome.id) ? 0.78 : /tree|forest|grass/i.test(biome.id) ? 0.42 : 0.55;
     for (let i = 0; i < count; i += 1) {
-      const x = (rng() - 0.5) * terrain.width * 0.92;
-      const z = (rng() - 0.5) * terrain.depth * 0.92;
+      const angle = rng() * Math.PI * 2;
+      const radius = Math.pow(rng(), edgeBias) * Math.min(terrain.width, terrain.depth) * 0.48;
+      const x = Math.cos(angle) * radius + (biome.density > 0.4 ? Math.sin(angle * 2.1) * terrain.width * 0.05 : 0);
+      const z = Math.sin(angle) * radius + (biome.density > 0.4 ? Math.cos(angle * 1.8) * terrain.depth * 0.05 : 0);
       const grid = terrainWorldToGrid(new THREE.Vector3(x, 0, z), terrain);
       const y = terrain.heights[grid.index] ?? 0;
       if (biome.assetTags.some((tag) => /tree|foliage|bush/i.test(tag)) && isPointNearRoad(new THREE.Vector3(x, y, z), roads)) continue;
@@ -65,4 +68,3 @@ export function generateFoliageGroups(project: WorldProject, config: WorldGenera
 
   return result;
 }
-

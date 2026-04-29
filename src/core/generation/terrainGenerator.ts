@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { applyTerrainBrush, flattenRoadTerrain, terrainIndex } from "../../viewport/terrain";
 import type { TerrainData, TerrainMaterial } from "../../types";
 import type { WorldGenerationConfig } from "../schema/WorldConfigSchema";
+import { createSeededRng } from "./random";
 
 function fract(value: number) {
   return value - Math.floor(value);
@@ -145,3 +146,71 @@ export function flattenRoadsIntoTerrain(terrain: TerrainData, roads: { points: {
   return flattenRoadTerrain(terrain, roads);
 }
 
+function shoulderMaterial(theme: WorldGenerationConfig["theme"]) {
+  switch (theme) {
+    case "desert":
+      return "sand";
+    case "forest":
+      return "dirt";
+    case "biblical":
+    case "mountain":
+      return "rock";
+    case "offroad":
+    default:
+      return "mud";
+  }
+}
+
+export function applyRoadSurfaceTreatment(
+  terrain: TerrainData,
+  roads: { points: { x: number; y: number; z: number }[]; width: number; closedLoop?: boolean }[],
+  seed: number,
+  theme: WorldGenerationConfig["theme"],
+) {
+  const rng = createSeededRng(seed + 1984);
+  let next = terrain;
+  const shoulder = shoulderMaterial(theme);
+
+  for (const road of roads) {
+    if (road.points.length < 2) continue;
+    const segmentCount = road.closedLoop ? road.points.length : road.points.length - 1;
+    for (let i = 0; i < segmentCount; i += 1) {
+      const start = road.points[i];
+      const end = road.points[(i + 1) % road.points.length];
+      const startVec = new THREE.Vector3(start.x, start.y, start.z);
+      const endVec = new THREE.Vector3(end.x, end.y, end.z);
+      const dx = endVec.x - startVec.x;
+      const dz = endVec.z - startVec.z;
+      const len = Math.max(0.001, Math.hypot(dx, dz));
+      const perpX = -dz / len;
+      const perpZ = dx / len;
+      const steps = Math.max(3, Math.ceil(len / Math.max(road.width * 0.45, 1)));
+      for (let step = 0; step <= steps; step += 1) {
+        const t = step / steps;
+        const centerX = THREE.MathUtils.lerp(startVec.x, endVec.x, t);
+        const centerZ = THREE.MathUtils.lerp(startVec.z, endVec.z, t);
+        const centerY = THREE.MathUtils.lerp(startVec.y, endVec.y, t);
+        const center = new THREE.Vector3(centerX, 0, centerZ);
+        const corridorSize = Math.max(road.width * 0.55, 2.5);
+        const shoulderSize = road.width * 0.95;
+        const bankSize = road.width * 1.25;
+        next = applyTerrainBrush(next, center, { size: corridorSize, strength: 0.35, falloff: "smooth", materialId: "track", flattenHeight: centerY }, "flatten");
+        next = applyTerrainBrush(next, center, { size: corridorSize * 1.05, strength: 0.9, falloff: "smooth", materialId: "track" }, "paint");
+
+        const sideOffset = shoulderSize * 0.48;
+        const bankOffset = bankSize * 0.56;
+        const left = new THREE.Vector3(centerX + perpX * sideOffset, 0, centerZ + perpZ * sideOffset);
+        const right = new THREE.Vector3(centerX - perpX * sideOffset, 0, centerZ - perpZ * sideOffset);
+        const leftBank = new THREE.Vector3(centerX + perpX * bankOffset, 0, centerZ + perpZ * bankOffset);
+        const rightBank = new THREE.Vector3(centerX - perpX * bankOffset, 0, centerZ - perpZ * bankOffset);
+
+        next = applyTerrainBrush(next, left, { size: shoulderSize * 0.65, strength: 0.45, falloff: "smooth", materialId: shoulder }, "paint");
+        next = applyTerrainBrush(next, right, { size: shoulderSize * 0.65, strength: 0.45, falloff: "smooth", materialId: shoulder }, "paint");
+        next = applyTerrainBrush(next, leftBank, { size: road.width * 0.8, strength: 0.2 + rng() * 0.2, falloff: "smooth", materialId: theme === "desert" ? "sand" : "rock" }, rng() > 0.5 ? "raise" : "lower");
+        next = applyTerrainBrush(next, rightBank, { size: road.width * 0.8, strength: 0.2 + rng() * 0.2, falloff: "smooth", materialId: theme === "desert" ? "sand" : "rock" }, rng() > 0.5 ? "raise" : "lower");
+      }
+    }
+  }
+
+  return next;
+}
