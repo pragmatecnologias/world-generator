@@ -273,6 +273,43 @@ button.ghost {
   overflow: hidden;
   gap: 0.75rem;
   padding: 0.75rem;
+  position: relative;
+}
+
+.layout-resize-handle {
+  position: absolute;
+  z-index: 30;
+  background: rgba(125, 211, 252, 0.08);
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  backdrop-filter: blur(4px);
+}
+
+.layout-resize-handle:hover {
+  background: rgba(125, 211, 252, 0.18);
+}
+
+.layout-resize-handle-left,
+.layout-resize-handle-right {
+  top: 0.75rem;
+  bottom: 0.75rem;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.layout-resize-handle-left {
+  left: 290px;
+}
+
+.layout-resize-handle-right {
+  right: 340px;
+}
+
+.layout-resize-handle-bottom {
+  left: 0.75rem;
+  right: 0.75rem;
+  top: 0;
+  height: 8px;
+  cursor: row-resize;
 }
 
 .workspace-strip {
@@ -596,6 +633,31 @@ button.ghost {
   gap: 0.5rem;
   padding: 0.75rem 1rem 0;
   flex-wrap: wrap;
+}
+
+.bottom-tab {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.bottom-tab.dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+
+.bottom-tab.drop-target {
+  outline: 1px solid rgba(125, 211, 252, 0.7);
+  outline-offset: 2px;
+}
+
+.workspace-panel-order-item.dragging {
+  opacity: 0.55;
+}
+
+.workspace-panel-order-item.drop-target {
+  outline: 1px solid rgba(255, 184, 77, 0.75);
+  outline-offset: 2px;
 }
 
 .bottom-content {

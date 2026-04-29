@@ -50,6 +50,17 @@ import {
   buildImportedAssetDefinition,
   generateZoneForProject,
 } from "./core/editor/projectMutations";
+import WorkspacePanelFrame from "./editor/layout/WorkspacePanelFrame";
+import {
+  bottomTabRegistry,
+  defaultBottomTabOrder,
+  defaultWorkspacePanelOrder,
+  workspacePanelRegistry,
+  type BottomTabDefinition,
+  type BottomTabId,
+  type WorkspaceDockSide,
+  type WorkspacePanelId,
+} from "./editor/layout/panelRegistry";
 import { runProofRun } from "./core/validation/proofRunner";
 import {
   applyWorldOperation,
@@ -63,9 +74,9 @@ import {
   type WorldOperation,
 } from "./core/worldDocument";
 
-type BottomTab = "assets" | "validation" | "console" | "layers" | "export" | "scene" | "json";
+type BottomTab = BottomTabId;
 type PanelMode = "docked" | "floating" | "hidden";
-type WorkspacePanel = "toolbox" | "inspector" | "bottom";
+type WorkspacePanel = WorkspacePanelId;
 type MenuKey = "file" | "edit" | "view" | "windows" | null;
 
 type FloatingPanelPosition = {
@@ -73,6 +84,21 @@ type FloatingPanelPosition = {
   y: number;
   width: number;
   height: number;
+};
+
+type WorkspaceLayoutState = {
+  toolboxWidth: number;
+  inspectorWidth: number;
+  bottomHeight: number;
+};
+
+type WorkspacePanelSnapshot = {
+  panelModes: Record<WorkspacePanel, PanelMode>;
+  bottomTab: BottomTab;
+  bottomTabOrder: BottomTab[];
+  workspacePanelOrder: WorkspacePanel[];
+  panelDockSides: Record<WorkspacePanel, WorkspaceDockSide>;
+  panelPositions: Record<WorkspacePanel, FloatingPanelPosition>;
 };
 
 type CommandItem = {
@@ -96,6 +122,35 @@ const terrainTools: { id: EditorTool; label: string }[] = [
   { id: "path-draw", label: "Path" },
   { id: "marker-place", label: "Markers" },
 ];
+
+const WORKSPACE_LAYOUT_KEY = "world-generator.workspace-layout";
+const WORKSPACE_PANEL_STATE_KEY = "world-generator.workspace-panels";
+const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayoutState = {
+  toolboxWidth: 290,
+  inspectorWidth: 340,
+  bottomHeight: 280,
+};
+
+const DEFAULT_WORKSPACE_PANEL_SNAPSHOT: WorkspacePanelSnapshot = {
+  panelModes: {
+    toolbox: "docked",
+    inspector: "docked",
+    bottom: "docked",
+  },
+  bottomTab: "assets",
+  bottomTabOrder: defaultBottomTabOrder,
+  workspacePanelOrder: defaultWorkspacePanelOrder,
+  panelDockSides: {
+    toolbox: "left",
+    inspector: "right",
+    bottom: "bottom",
+  },
+  panelPositions: {
+    toolbox: panelPosition(320, 640, 18, 110),
+    inspector: panelPosition(360, 660, Math.max(880, typeof window !== "undefined" ? window.innerWidth - 380 : 880), 110),
+    bottom: panelPosition(typeof window !== "undefined" ? Math.max(900, window.innerWidth - 36) : 900, 280, 18, 520),
+  },
+};
 
 function loadInitialProject() {
   return loadProjectFromStorage() ?? generateWorld(DEFAULT_WORLD_GENERATION_CONFIG);
@@ -136,6 +191,49 @@ function stableHash(value: unknown) {
   return `h${Math.abs(hash)}`;
 }
 
+function reorderList<T>(list: T[], fromIndex: number, toIndex: number) {
+  if (fromIndex === toIndex) return list;
+  const next = [...list];
+  const [item] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, item);
+  return next;
+}
+
+function normalizeBottomTabOrder(order: unknown): BottomTab[] {
+  const known = new Set(bottomTabRegistry.map((tab) => tab.id));
+  const next = Array.isArray(order) ? order.filter((tab): tab is BottomTab => typeof tab === "string" && known.has(tab as BottomTab)) : [];
+  const unique = [...new Set(next)];
+  for (const tab of defaultBottomTabOrder) {
+    if (!unique.includes(tab)) unique.push(tab);
+  }
+  return unique;
+}
+
+function normalizeWorkspacePanelOrder(order: unknown): WorkspacePanel[] {
+  const known = new Set(defaultWorkspacePanelOrder);
+  const next = Array.isArray(order) ? order.filter((panel): panel is WorkspacePanel => typeof panel === "string" && known.has(panel as WorkspacePanel)) : [];
+  const unique = [...new Set(next)];
+  for (const panel of defaultWorkspacePanelOrder) {
+    if (!unique.includes(panel)) unique.push(panel);
+  }
+  return unique;
+}
+
+function normalizeWorkspacePanelDockSides(value: unknown): Record<WorkspacePanel, WorkspaceDockSide> {
+  const defaultSides: Record<WorkspacePanel, WorkspaceDockSide> = {
+    toolbox: "left",
+    inspector: "right",
+    bottom: "bottom",
+  };
+  if (!value || typeof value !== "object") return defaultSides;
+  const parsed = value as Partial<Record<WorkspacePanel, WorkspaceDockSide>>;
+  return {
+    toolbox: parsed.toolbox === "right" ? "right" : "left",
+    inspector: parsed.inspector === "left" ? "left" : "right",
+    bottom: "bottom",
+  };
+}
+
 function createAssetThumbnail(name: string, category: string) {
   const canvas = document.createElement("canvas");
   canvas.width = 192;
@@ -164,7 +262,50 @@ function EditorApp() {
   const [selectionObjectId, setSelectionObjectId] = useState<string | undefined>(project.objects[0]?.id);
   const [selectedAssetId, setSelectedAssetId] = useState<string | undefined>(project.assets[0]?.id);
   const [statusMessage, setStatusMessage] = useState("Ready");
-  const [bottomTab, setBottomTab] = useState<BottomTab>("assets");
+  const [bottomTab, setBottomTab] = useState<BottomTab>(() => {
+    if (typeof window === "undefined") return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.bottomTab;
+    try {
+      const raw = window.localStorage.getItem(WORKSPACE_PANEL_STATE_KEY);
+      if (!raw) return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.bottomTab;
+      const parsed = JSON.parse(raw) as Partial<WorkspacePanelSnapshot>;
+      return (parsed.bottomTab ?? DEFAULT_WORKSPACE_PANEL_SNAPSHOT.bottomTab) as BottomTab;
+    } catch {
+      return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.bottomTab;
+    }
+  });
+  const [bottomTabOrder, setBottomTabOrder] = useState<BottomTab[]>(() => {
+    if (typeof window === "undefined") return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.bottomTabOrder;
+    try {
+      const raw = window.localStorage.getItem(WORKSPACE_PANEL_STATE_KEY);
+      if (!raw) return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.bottomTabOrder;
+      const parsed = JSON.parse(raw) as Partial<WorkspacePanelSnapshot>;
+      return normalizeBottomTabOrder(parsed.bottomTabOrder ?? DEFAULT_WORKSPACE_PANEL_SNAPSHOT.bottomTabOrder);
+    } catch {
+      return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.bottomTabOrder;
+    }
+  });
+  const [workspacePanelOrder, setWorkspacePanelOrder] = useState<WorkspacePanel[]>(() => {
+    if (typeof window === "undefined") return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.workspacePanelOrder;
+    try {
+      const raw = window.localStorage.getItem(WORKSPACE_PANEL_STATE_KEY);
+      if (!raw) return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.workspacePanelOrder;
+      const parsed = JSON.parse(raw) as Partial<WorkspacePanelSnapshot>;
+      return normalizeWorkspacePanelOrder(parsed.workspacePanelOrder ?? DEFAULT_WORKSPACE_PANEL_SNAPSHOT.workspacePanelOrder);
+    } catch {
+      return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.workspacePanelOrder;
+    }
+  });
+  const [panelDockSides, setPanelDockSides] = useState<Record<WorkspacePanel, WorkspaceDockSide>>(() => {
+    if (typeof window === "undefined") return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelDockSides;
+    try {
+      const raw = window.localStorage.getItem(WORKSPACE_PANEL_STATE_KEY);
+      if (!raw) return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelDockSides;
+      const parsed = JSON.parse(raw) as Partial<WorkspacePanelSnapshot>;
+      return normalizeWorkspacePanelDockSides(parsed.panelDockSides ?? DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelDockSides);
+    } catch {
+      return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelDockSides;
+    }
+  });
   const [foliageSettings, setFoliageSettings] = useState({
     density: 10,
     minSpacing: 2.5,
@@ -226,17 +367,51 @@ function EditorApp() {
   const [aiCommandStatus, setAiCommandStatus] = useState("AI command ready");
   const [aiCommandIssues, setAiCommandIssues] = useState<string[]>([]);
   const [workspaceStripCollapsed, setWorkspaceStripCollapsed] = useState(false);
-  const [panelModes, setPanelModes] = useState<Record<WorkspacePanel, PanelMode>>({
-    toolbox: "docked",
-    inspector: "docked",
-    bottom: "docked",
+  const [panelModes, setPanelModes] = useState<Record<WorkspacePanel, PanelMode>>(() => {
+    if (typeof window === "undefined") return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelModes;
+    try {
+      const raw = window.localStorage.getItem(WORKSPACE_PANEL_STATE_KEY);
+      if (!raw) return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelModes;
+      const parsed = JSON.parse(raw) as Partial<WorkspacePanelSnapshot>;
+      return { ...DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelModes, ...(parsed.panelModes ?? {}) };
+    } catch {
+      return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelModes;
+    }
   });
-  const [panelPositions, setPanelPositions] = useState<Record<WorkspacePanel, FloatingPanelPosition>>({
-    toolbox: panelPosition(320, 640, 18, 110),
-    inspector: panelPosition(360, 660, Math.max(880, typeof window !== "undefined" ? window.innerWidth - 380 : 880), 110),
-    bottom: panelPosition(typeof window !== "undefined" ? Math.max(900, window.innerWidth - 36) : 900, 280, 18, 520),
+  const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayoutState>(() => {
+    if (typeof window === "undefined") return DEFAULT_WORKSPACE_LAYOUT;
+    try {
+      const raw = window.localStorage.getItem(WORKSPACE_LAYOUT_KEY);
+      if (!raw) return DEFAULT_WORKSPACE_LAYOUT;
+      const parsed = JSON.parse(raw) as Partial<WorkspaceLayoutState>;
+      return {
+        toolboxWidth: Number.isFinite(parsed.toolboxWidth) ? Math.max(220, Math.min(420, parsed.toolboxWidth!)) : DEFAULT_WORKSPACE_LAYOUT.toolboxWidth,
+        inspectorWidth: Number.isFinite(parsed.inspectorWidth) ? Math.max(260, Math.min(460, parsed.inspectorWidth!)) : DEFAULT_WORKSPACE_LAYOUT.inspectorWidth,
+        bottomHeight: Number.isFinite(parsed.bottomHeight) ? Math.max(180, Math.min(420, parsed.bottomHeight!)) : DEFAULT_WORKSPACE_LAYOUT.bottomHeight,
+      };
+    } catch {
+      return DEFAULT_WORKSPACE_LAYOUT;
+    }
   });
-  const dragStateRef = useRef<{ panel: WorkspacePanel; offsetX: number; offsetY: number } | null>(null);
+  const [panelPositions, setPanelPositions] = useState<Record<WorkspacePanel, FloatingPanelPosition>>(() => {
+    if (typeof window === "undefined") return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelPositions;
+    try {
+      const raw = window.localStorage.getItem(WORKSPACE_PANEL_STATE_KEY);
+      if (!raw) return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelPositions;
+      const parsed = JSON.parse(raw) as Partial<WorkspacePanelSnapshot>;
+      return { ...DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelPositions, ...(parsed.panelPositions ?? {}) };
+    } catch {
+      return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelPositions;
+    }
+  });
+  const dragStateRef = useRef<{ panel: WorkspacePanel; offsetX: number; offsetY: number; originMode: PanelMode } | null>(null);
+  const layoutDragRef = useRef<{ target: WorkspacePanel; startX: number; startY: number; startLayout: WorkspaceLayoutState } | null>(null);
+  const bottomTabDragRef = useRef<BottomTab | null>(null);
+  const workspacePanelDragRef = useRef<WorkspacePanel | null>(null);
+  const [draggingBottomTab, setDraggingBottomTab] = useState<BottomTab | null>(null);
+  const [draggingWorkspacePanel, setDraggingWorkspacePanel] = useState<WorkspacePanel | null>(null);
+  const [bottomTabDropTarget, setBottomTabDropTarget] = useState<BottomTab | null>(null);
+  const [workspacePanelDropTarget, setWorkspacePanelDropTarget] = useState<WorkspacePanel | null>(null);
   const projectRef = useRef(project);
   const previewConfirmedRef = useRef(previewConfirmed);
 
@@ -294,6 +469,32 @@ function EditorApp() {
   }, [project]);
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(WORKSPACE_LAYOUT_KEY, JSON.stringify(workspaceLayout));
+    } catch {
+      // ignore layout persistence failures
+    }
+  }, [workspaceLayout]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        WORKSPACE_PANEL_STATE_KEY,
+        JSON.stringify({
+          panelModes,
+          bottomTab,
+          bottomTabOrder,
+          workspacePanelOrder,
+          panelDockSides,
+          panelPositions,
+        } satisfies WorkspacePanelSnapshot),
+      );
+    } catch {
+      // ignore panel persistence failures
+    }
+  }, [bottomTab, bottomTabOrder, panelDockSides, panelModes, panelPositions, workspacePanelOrder]);
+
+  useEffect(() => {
     const nextDocument = worldProjectToDocument(project);
     setWorldDocument(nextDocument);
     setJsonWorldDraft(JSON.stringify(nextDocument, null, 2));
@@ -326,7 +527,16 @@ function EditorApp() {
         },
       }));
     };
-    const handleUp = () => {
+    const handleUp = (event: PointerEvent) => {
+      const drag = dragStateRef.current;
+      if (!drag) return;
+      const shouldDock =
+        (drag.panel === "toolbox" && event.clientX < 240) ||
+        (drag.panel === "inspector" && event.clientX > window.innerWidth - 240) ||
+        (drag.panel === "bottom" && event.clientY > window.innerHeight - 140);
+      if (shouldDock) {
+        setPanelMode(drag.panel, "docked");
+      }
       dragStateRef.current = null;
     };
     window.addEventListener("pointermove", handleMove);
@@ -583,19 +793,193 @@ function EditorApp() {
     });
   };
 
+  const resetBottomTabOrder = () => {
+    setBottomTabOrder(defaultBottomTabOrder);
+    setDraggingBottomTab(null);
+    setBottomTabDropTarget(null);
+    setStatusMessage("Reset tab order");
+  };
+
+  const resetWorkspacePanelOrder = () => {
+    setWorkspacePanelOrder(defaultWorkspacePanelOrder);
+    setDraggingWorkspacePanel(null);
+    setWorkspacePanelDropTarget(null);
+    setStatusMessage("Reset panel order");
+  };
+
+  const moveWorkspacePanelOrder = (panel: WorkspacePanel, direction: -1 | 1) => {
+    setWorkspacePanelOrder((current) => {
+      const fromIndex = current.indexOf(panel);
+      if (fromIndex < 0) return current;
+      const toIndex = fromIndex + direction;
+      if (toIndex < 0 || toIndex >= current.length) return current;
+      return reorderList(current, fromIndex, toIndex);
+    });
+  };
+
+  const toggleWorkspacePanelDockSide = (panel: WorkspacePanel) => {
+    if (panel === "bottom") return;
+    setPanelDockSides((current) => {
+      const nextSide: WorkspaceDockSide = current[panel] === "left" ? "right" : "left";
+      const otherPanel = workspacePanelOrder.find((candidate) => candidate !== panel && candidate !== "bottom" && current[candidate] === nextSide);
+      if (otherPanel) {
+        return {
+          ...current,
+          [panel]: nextSide,
+          [otherPanel]: current[panel],
+        };
+      }
+      return { ...current, [panel]: nextSide };
+    });
+  };
+
+  const beginWorkspacePanelDrag = (panel: WorkspacePanel, event: React.DragEvent<HTMLDivElement>) => {
+    workspacePanelDragRef.current = panel;
+    setDraggingWorkspacePanel(panel);
+    setWorkspacePanelDropTarget(null);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", panel);
+  };
+
+  const handleWorkspacePanelDragOver = (panel: WorkspacePanel, event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (workspacePanelDragRef.current && workspacePanelDragRef.current !== panel) {
+      setWorkspacePanelDropTarget(panel);
+    }
+  };
+
+  const handleWorkspacePanelDrop = (panel: WorkspacePanel, event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const from = workspacePanelDragRef.current ?? (event.dataTransfer.getData("text/plain") as WorkspacePanel | "");
+    if (!from || from === panel) {
+      workspacePanelDragRef.current = null;
+      setDraggingWorkspacePanel(null);
+      setWorkspacePanelDropTarget(null);
+      return;
+    }
+    setWorkspacePanelOrder((current) => {
+      const fromIndex = current.indexOf(from as WorkspacePanel);
+      const toIndex = current.indexOf(panel);
+      if (fromIndex < 0 || toIndex < 0) return current;
+      return reorderList(current, fromIndex, toIndex);
+    });
+    workspacePanelDragRef.current = null;
+    setDraggingWorkspacePanel(null);
+    setWorkspacePanelDropTarget(null);
+  };
+
+  const endWorkspacePanelDrag = () => {
+    workspacePanelDragRef.current = null;
+    setDraggingWorkspacePanel(null);
+    setWorkspacePanelDropTarget(null);
+  };
+
+  const beginBottomTabDrag = (tab: BottomTab, event: React.DragEvent<HTMLButtonElement>) => {
+    bottomTabDragRef.current = tab;
+    setDraggingBottomTab(tab);
+    setBottomTabDropTarget(null);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", tab);
+  };
+
+  const handleBottomTabDragOver = (tab: BottomTab, event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    if (bottomTabDragRef.current && bottomTabDragRef.current !== tab) {
+      setBottomTabDropTarget(tab);
+    }
+  };
+
+  const handleBottomTabDrop = (tab: BottomTab, event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const from = bottomTabDragRef.current ?? (event.dataTransfer.getData("text/plain") as BottomTab | "");
+    if (!from || from === tab) {
+      bottomTabDragRef.current = null;
+      setBottomTabDropTarget(null);
+      return;
+    }
+    setBottomTabOrder((current) => {
+      const fromIndex = current.indexOf(from as BottomTab);
+      const toIndex = current.indexOf(tab);
+      if (fromIndex < 0 || toIndex < 0) return current;
+      return reorderList(current, fromIndex, toIndex);
+    });
+    bottomTabDragRef.current = null;
+    setDraggingBottomTab(null);
+    setBottomTabDropTarget(null);
+  };
+
+  const endBottomTabDrag = () => {
+    bottomTabDragRef.current = null;
+    setDraggingBottomTab(null);
+    setBottomTabDropTarget(null);
+  };
+
   const beginPanelDrag = (panel: WorkspacePanel, event: React.PointerEvent<HTMLDivElement>) => {
-    if (panelModes[panel] !== "floating") return;
+    const originMode = panelModes[panel];
+    if (originMode === "hidden") return;
+    if (originMode !== "floating") {
+      setPanelMode(panel, "floating");
+    }
     dragStateRef.current = {
       panel,
       offsetX: event.clientX - panelPositions[panel].x,
       offsetY: event.clientY - panelPositions[panel].y,
+      originMode,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
   };
 
+  const beginLayoutResize = (target: WorkspacePanel, event: React.PointerEvent<HTMLDivElement>) => {
+    layoutDragRef.current = {
+      target,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLayout: workspaceLayout,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+
+  useEffect(() => {
+    const handleMove = (event: PointerEvent) => {
+      if (!layoutDragRef.current) return;
+      const { target, startX, startY, startLayout } = layoutDragRef.current;
+      const deltaX = event.clientX - startX;
+      const deltaY = event.clientY - startY;
+      setWorkspaceLayout((current) => {
+        if (target === "toolbox") {
+          return { ...current, toolboxWidth: Math.max(220, Math.min(420, startLayout.toolboxWidth + deltaX)) };
+        }
+        if (target === "inspector") {
+          return { ...current, inspectorWidth: Math.max(260, Math.min(460, startLayout.inspectorWidth - deltaX)) };
+        }
+        return { ...current, bottomHeight: Math.max(180, Math.min(420, startLayout.bottomHeight - deltaY)) };
+      });
+    };
+    const handleUp = () => {
+      layoutDragRef.current = null;
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+    };
+  }, [workspaceLayout]);
+
   const resetWorkspace = () => {
     setPanelModes({ toolbox: "docked", inspector: "docked", bottom: "docked" });
+    setWorkspaceLayout(DEFAULT_WORKSPACE_LAYOUT);
+    setBottomTabOrder(defaultBottomTabOrder);
+    setWorkspacePanelOrder(defaultWorkspacePanelOrder);
+    setPanelDockSides(DEFAULT_WORKSPACE_PANEL_SNAPSHOT.panelDockSides);
+    setDraggingBottomTab(null);
+    setDraggingWorkspacePanel(null);
+    setBottomTabDropTarget(null);
+    setWorkspacePanelDropTarget(null);
     setPanelPositions({
       toolbox: panelPosition(320, 640, 18, 110),
       inspector: panelPosition(360, 660, Math.max(880, typeof window !== "undefined" ? window.innerWidth - 380 : 880), 110),
@@ -1016,6 +1400,25 @@ function EditorApp() {
       },
     }));
 
+    const windowItems: CommandItem[] = workspacePanelOrder.flatMap((panel) => {
+      const definition = workspacePanelRegistry[panel];
+      const label = definition.title.toLowerCase();
+      return [
+        {
+          id: `${panel}:float`,
+          label: `Float ${definition.title}`,
+          group: "Windows",
+          run: () => setPanelMode(panel, "floating"),
+        },
+        {
+          id: `${panel}:toggle`,
+          label: panelModes[panel] === "hidden" ? `Show ${label}` : `Hide ${label}`,
+          group: "Windows",
+          run: () => togglePanelMode(panel),
+        },
+      ];
+    });
+
     return [
       { id: "new", label: "New world", group: "Project", shortcut: "Ctrl/Cmd+N", run: onNewProject },
       { id: "open", label: "Open world", group: "Project", shortcut: "Ctrl/Cmd+O", run: () => document.getElementById("load-project")?.click() },
@@ -1029,15 +1432,10 @@ function EditorApp() {
       { id: "duplicate", label: "Duplicate selected", group: "Edit", shortcut: "D", run: duplicateSelected },
       { id: "delete", label: "Delete selected", group: "Edit", shortcut: "Backspace", run: deleteSelected },
       { id: "workspace-reset", label: "Reset workspace", group: "View", run: resetWorkspace },
-      { id: "toolbox-float", label: "Float toolbox", group: "Windows", run: () => setPanelMode("toolbox", "floating") },
-      { id: "inspector-float", label: "Float inspector", group: "Windows", run: () => setPanelMode("inspector", "floating") },
-      { id: "bottom-float", label: "Float bottom drawer", group: "Windows", run: () => setPanelMode("bottom", "floating") },
-      { id: "toolbox-toggle", label: panelModes.toolbox === "hidden" ? "Show toolbox" : "Hide toolbox", group: "Windows", run: () => togglePanelMode("toolbox") },
-      { id: "inspector-toggle", label: panelModes.inspector === "hidden" ? "Show inspector" : "Hide inspector", group: "Windows", run: () => togglePanelMode("inspector") },
-      { id: "bottom-toggle", label: panelModes.bottom === "hidden" ? "Show bottom drawer" : "Hide bottom drawer", group: "Windows", run: () => togglePanelMode("bottom") },
+      ...windowItems,
       ...toolItems,
     ];
-  }, [duplicateSelected, deleteSelected, onExport, onNewProject, onRedo, onSave, onSaveAs, onUndo, panelModes.bottom, panelModes.inspector, panelModes.toolbox, resetWorkspace, setPanelMode, setActiveTool, setBottomTab, togglePanelMode]);
+  }, [duplicateSelected, deleteSelected, onExport, onNewProject, onRedo, onSave, onSaveAs, onUndo, panelModes.bottom, panelModes.inspector, panelModes.toolbox, resetWorkspace, setPanelMode, setActiveTool, setBottomTab, togglePanelMode, workspacePanelOrder]);
 
   const filteredCommands = useMemo(() => {
     const query = commandQuery.trim().toLowerCase();
@@ -1052,6 +1450,19 @@ function EditorApp() {
       ? "FAKE"
       : "PARTIAL"
     : "REAL";
+
+  const orderedBottomTabs = useMemo(
+    () =>
+      bottomTabOrder
+        .map((tabId) => bottomTabRegistry.find((tab) => tab.id === tabId))
+        .filter((tab): tab is BottomTabDefinition => Boolean(tab)),
+    [bottomTabOrder],
+  );
+
+  const leftDockPanel = useMemo(() => workspacePanelOrder.find((panel) => panel !== "bottom" && panelModes[panel] === "docked" && panelDockSides[panel] === "left") ?? null, [panelDockSides, panelModes, workspacePanelOrder]);
+  const rightDockPanel = useMemo(() => workspacePanelOrder.find((panel) => panel !== "bottom" && panelModes[panel] === "docked" && panelDockSides[panel] === "right") ?? null, [panelDockSides, panelModes, workspacePanelOrder]);
+  const leftDockWidth = leftDockPanel === "toolbox" ? workspaceLayout.toolboxWidth : leftDockPanel === "inspector" ? workspaceLayout.inspectorWidth : 0;
+  const rightDockWidth = rightDockPanel === "toolbox" ? workspaceLayout.toolboxWidth : rightDockPanel === "inspector" ? workspaceLayout.inspectorWidth : 0;
 
   return (
     <div className="app">
@@ -1228,10 +1639,28 @@ function EditorApp() {
       </div>
 
       <div className="layout" style={{
-        gridTemplateColumns: `${panelModes.toolbox === "docked" ? "minmax(220px, 290px)" : "0px"} minmax(0, 1fr) ${panelModes.inspector === "docked" ? "minmax(260px, 340px)" : "0px"}`,
+        position: "relative",
+        gridTemplateColumns: `${leftDockWidth ? `${leftDockWidth}px` : "0px"} minmax(0, 1fr) ${rightDockWidth ? `${rightDockWidth}px` : "0px"}`,
       }}>
-        <aside
-          className={`panel left ${panelModes.toolbox}`}
+        {leftDockPanel ? (
+          <div
+            className="layout-resize-handle layout-resize-handle-left"
+            style={{ left: `${leftDockWidth - 4}px` }}
+            onPointerDown={(event) => beginLayoutResize(leftDockPanel, event)}
+          />
+        ) : null}
+        {rightDockPanel ? (
+          <div
+            className="layout-resize-handle layout-resize-handle-right"
+            style={{ right: `${rightDockWidth - 4}px` }}
+            onPointerDown={(event) => beginLayoutResize(rightDockPanel, event)}
+          />
+        ) : null}
+        <WorkspacePanelFrame
+          panel={workspacePanelRegistry.toolbox}
+          mode={panelModes.toolbox}
+          dockSide={panelDockSides.toolbox}
+          className={`panel ${panelDockSides.toolbox} ${panelModes.toolbox}`}
           style={panelModes.toolbox === "floating"
             ? {
                 position: "fixed",
@@ -1241,18 +1670,19 @@ function EditorApp() {
                 height: panelPositions.toolbox.height,
                 zIndex: 60,
               }
-            : undefined}
+            : panelModes.toolbox === "docked"
+              ? {
+                  gridColumn: panelDockSides.toolbox === "left" ? 1 : 3,
+                  gridRow: 1,
+                  width: "100%",
+                  height: "100%",
+                }
+              : undefined}
+          onHeaderPointerDown={(event) => beginPanelDrag("toolbox", event)}
+          onToggleMode={() => togglePanelMode("toolbox")}
+          onCycleDockSide={() => toggleWorkspacePanelDockSide("toolbox")}
+          onHide={() => setPanelMode("toolbox", "hidden")}
         >
-          <div className="panel-heading panel-header" onPointerDown={(event) => beginPanelDrag("toolbox", event)}>
-            <div className="eyebrow">Brush & tools</div>
-            <div className="panel-header-row">
-              <div className="panel-heading-copy">Shape terrain, paint materials, and place content directly in the world.</div>
-              <div className="panel-actions">
-                <button onClick={() => togglePanelMode("toolbox")}>{panelModes.toolbox === "floating" ? "Dock" : "Float"}</button>
-                <button onClick={() => setPanelMode("toolbox", "hidden")}>Hide</button>
-              </div>
-            </div>
-          </div>
           <div className="section">
             <h3>Brush</h3>
             <div className="field">
@@ -1555,7 +1985,7 @@ function EditorApp() {
             </div>
             <div className="muted code">Active tool: {activeTool}</div>
           </div>
-        </aside>
+        </WorkspacePanelFrame>
 
         <main className="viewport-wrap">
           <div className="viewport-frame">
@@ -1585,8 +2015,11 @@ function EditorApp() {
           />
         </main>
 
-        <aside
-          className={`panel right ${panelModes.inspector}`}
+        <WorkspacePanelFrame
+          panel={workspacePanelRegistry.inspector}
+          mode={panelModes.inspector}
+          dockSide={panelDockSides.inspector}
+          className={`panel ${panelDockSides.inspector} ${panelModes.inspector}`}
           style={panelModes.inspector === "floating"
             ? {
                 position: "fixed",
@@ -1596,18 +2029,19 @@ function EditorApp() {
                 height: panelPositions.inspector.height,
                 zIndex: 60,
               }
-            : undefined}
+            : panelModes.inspector === "docked"
+              ? {
+                  gridColumn: panelDockSides.inspector === "left" ? 1 : 3,
+                  gridRow: 1,
+                  width: "100%",
+                  height: "100%",
+                }
+              : undefined}
+          onHeaderPointerDown={(event) => beginPanelDrag("inspector", event)}
+          onToggleMode={() => togglePanelMode("inspector")}
+          onCycleDockSide={() => toggleWorkspacePanelDockSide("inspector")}
+          onHide={() => setPanelMode("inspector", "hidden")}
         >
-          <div className="panel-heading panel-header" onPointerDown={(event) => beginPanelDrag("inspector", event)}>
-            <div className="eyebrow">Inspector & validation</div>
-            <div className="panel-header-row">
-              <div className="panel-heading-copy">Edit selected world data and verify what is truly saved, exported, and previewable.</div>
-              <div className="panel-actions">
-                <button onClick={() => togglePanelMode("inspector")}>{panelModes.inspector === "floating" ? "Dock" : "Float"}</button>
-                <button onClick={() => setPanelMode("inspector", "hidden")}>Hide</button>
-              </div>
-            </div>
-          </div>
           <div className="section">
             <h3>Inspector</h3>
             {selectedObject ? (
@@ -1697,10 +2131,12 @@ function EditorApp() {
               <button onClick={() => onExport()}>Export JSON</button>
             </div>
           </div>
-        </aside>
+        </WorkspacePanelFrame>
       </div>
 
-      <div
+      <WorkspacePanelFrame
+        panel={workspacePanelRegistry.bottom}
+        mode={panelModes.bottom}
         className={`bottom ${panelModes.bottom}`}
         style={panelModes.bottom === "floating"
           ? {
@@ -1711,17 +2147,49 @@ function EditorApp() {
               height: panelPositions.bottom.height,
               zIndex: 55,
             }
-          : undefined}
+          : { height: `${workspaceLayout.bottomHeight}px`, position: "relative" }}
+        onHeaderPointerDown={(event) => beginPanelDrag("bottom", event)}
+        onToggleMode={() => togglePanelMode("bottom")}
+        onHide={() => setPanelMode("bottom", "hidden")}
       >
-        <div className="bottom-bar" onPointerDown={(event) => beginPanelDrag("bottom", event)}>
+        {panelModes.bottom === "docked" ? (
+          <div
+            className="layout-resize-handle layout-resize-handle-bottom"
+            onPointerDown={(event) => beginLayoutResize("bottom", event)}
+          />
+        ) : null}
+        <div
+          className="bottom-bar"
+          onPointerDown={(event) => {
+            if (event.currentTarget !== event.target) return;
+            beginPanelDrag("bottom", event);
+          }}
+        >
           <div className="bottom-tabs">
-            {(["assets", "layers", "scene", "validation", "console", "export", "json"] as BottomTab[]).map((tab) => (
-              <button key={tab} className={bottomTab === tab ? "active" : ""} onClick={() => setBottomTab(tab)}>
-                {tab}
+            {orderedBottomTabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={[
+                  "bottom-tab",
+                  bottomTab === tab.id ? "active" : "",
+                  bottomTabDropTarget === tab.id ? "drop-target" : "",
+                  draggingBottomTab === tab.id ? "dragging" : "",
+                ].filter(Boolean).join(" ")}
+                draggable
+                title="Drag to reorder tabs"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => setBottomTab(tab.id)}
+                onDragStart={(event) => beginBottomTabDrag(tab.id, event)}
+                onDragOver={(event) => handleBottomTabDragOver(tab.id, event)}
+                onDrop={(event) => handleBottomTabDrop(tab.id, event)}
+                onDragEnd={endBottomTabDrag}
+              >
+                {tab.label}
               </button>
             ))}
           </div>
           <div className="panel-actions">
+            <button onClick={resetBottomTabOrder}>Reset tabs</button>
             <button onClick={() => togglePanelMode("bottom")}>{panelModes.bottom === "floating" ? "Dock" : "Float"}</button>
             <button onClick={() => setPanelMode("bottom", "hidden")}>Hide</button>
           </div>
@@ -1846,6 +2314,40 @@ function EditorApp() {
                   ))}
                 </div>
               ) : null}
+              <div className="list-item">
+                <div className="panel-row" style={{ justifyContent: "space-between" }}>
+                  <strong>Panel registry order</strong>
+                  <button onClick={resetWorkspacePanelOrder}>Reset panels</button>
+                </div>
+                <div className="muted">Reorder the visible workspace registry and keep it saved with the workspace.</div>
+                <div className="list" style={{ marginTop: "0.5rem" }}>
+                  {workspacePanelOrder.map((panel, index) => {
+                    const definition = workspacePanelRegistry[panel];
+                    return (
+                      <div
+                        key={panel}
+                        className={`list-item workspace-panel-order-item ${draggingWorkspacePanel === panel ? "dragging" : ""} ${workspacePanelDropTarget === panel ? "drop-target" : ""}`}
+                        draggable
+                        onDragStart={(event) => beginWorkspacePanelDrag(panel, event)}
+                        onDragOver={(event) => handleWorkspacePanelDragOver(panel, event)}
+                        onDrop={(event) => handleWorkspacePanelDrop(panel, event)}
+                        onDragEnd={endWorkspacePanelDrag}
+                        style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem", cursor: "grab" }}
+                      >
+                        <div>
+                          <div><strong>{definition.title}</strong></div>
+                          <div className="muted code">{panel}</div>
+                        </div>
+                        <div className="chip-row">
+                          <span className="kbd">Drag</span>
+                          <button onClick={() => moveWorkspacePanelOrder(panel, -1)} disabled={index === 0}>Up</button>
+                          <button onClick={() => moveWorkspacePanelOrder(panel, 1)} disabled={index === workspacePanelOrder.length - 1}>Down</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
           {bottomTab === "export" && (
@@ -1957,7 +2459,7 @@ function EditorApp() {
             </div>
           )}
         </div>
-      </div>
+      </WorkspacePanelFrame>
 
       <input
         key={fileInputKey}
