@@ -1,4 +1,5 @@
 import type { PlacedObject, ScatterZone, TerrainData, WorldProject } from "../../types";
+import type { PathDefinition } from "../schema/CoreWorldSchema";
 import type { WorldGenerationConfig } from "../schema/WorldConfigSchema";
 import { isSpacingClear } from "../rules/placementRules";
 import { terrainSlopeAt } from "../../viewport/terrain";
@@ -18,7 +19,7 @@ export type ScatterGenerationResult = {
   objects: PlacedObject[];
 };
 
-export function generateScatterZones(project: WorldProject, config: WorldGenerationConfig, terrain: TerrainData, roads: { points: { x: number; y: number; z: number }[]; width: number }[]): ScatterGenerationResult {
+export function generateScatterZones(project: WorldProject, config: WorldGenerationConfig, terrain: TerrainData, roads: PathDefinition[]): ScatterGenerationResult {
   const rng = mulberry32(config.seed + 2024);
   const zones: ScatterZone[] = [];
   const propAssets = project.assets.filter((asset) => asset.tags.some((tag) => /rock|prop|barrier/i.test(tag)) || asset.category.toLowerCase().includes("prop"));

@@ -24,6 +24,7 @@ export type WorldGenerationBiomeConfig = {
 
 export type WorldGenerationConfig = {
   seed: number;
+  generator?: "offroad" | "city";
   theme: "offroad" | "desert" | "forest" | "biblical" | "mountain";
   terrain: {
     width: number;
@@ -48,6 +49,7 @@ export type WorldGenerationConfig = {
 
 export const DEFAULT_WORLD_GENERATION_CONFIG: WorldGenerationConfig = {
   seed: 42,
+  generator: "offroad",
   theme: "offroad",
   terrain: {
     width: 120,
@@ -104,4 +106,3 @@ export const DEFAULT_WORLD_GENERATION_CONFIG: WorldGenerationConfig = {
     tags: ["generated", "offroad", "ai-ready"],
   },
 };
-

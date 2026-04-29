@@ -20,6 +20,22 @@ export type {
   ValidationResult,
 } from "../../types";
 
-export type { WorldDocument, WorldOperation } from "../../worldDocument";
+export type {
+  PlacementGroupDefinition,
+  WorldDocument,
+  WorldOperation,
+} from "../../worldDocument";
+export {
+  WORLD_DOCUMENT_SCHEMA_VERSION,
+  normalizeWorldDocument,
+  worldDocumentToPlacementGroups,
+  worldDocumentToPaths,
+  worldDocumentToProject,
+  worldDocumentToZones,
+  worldProjectToDocument,
+  worldProjectToPaths,
+  worldProjectToZones,
+} from "../../worldDocument";
 export type { TerrainNoiseConfig, WorldGenerationBiomeConfig, WorldGenerationConfig, WorldGenerationRoadConfig } from "./WorldConfigSchema";
-
+export type { PathDefinition, PlacementRule, ZoneDefinition, CoreWorldGeneratorConfig } from "./CoreWorldSchema";
+export { roadsToPaths, pathsToRoads, scatterZonesToZones, foliageGroupsToPlacementGroups } from "./compat";

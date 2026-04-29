@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { applyTerrainBrush, flattenRoadTerrain, terrainIndex } from "../../viewport/terrain";
 import type { TerrainData, TerrainMaterial } from "../../types";
 import type { WorldGenerationConfig } from "../schema/WorldConfigSchema";
+import type { PathDefinition } from "../schema/CoreWorldSchema";
 import { createSeededRng } from "./random";
 
 function fract(value: number) {
@@ -276,8 +277,12 @@ export function generateTerrain(config: WorldGenerationConfig): TerrainData {
   return terrainData;
 }
 
-export function flattenRoadsIntoTerrain(terrain: TerrainData, roads: { points: { x: number; y: number; z: number }[]; width: number; flattenTerrain: boolean }[]) {
-  return flattenRoadTerrain(terrain, roads);
+export function flattenPathsIntoTerrain(terrain: TerrainData, paths: { points: { x: number; y: number; z: number }[]; width: number; flattenTerrain: boolean; closedLoop?: boolean }[]) {
+  return flattenRoadTerrain(terrain, paths);
+}
+
+export function flattenRoadsIntoTerrain(terrain: TerrainData, roads: { points: { x: number; y: number; z: number }[]; width: number; flattenTerrain: boolean; closedLoop?: boolean }[]) {
+  return flattenPathsIntoTerrain(terrain, roads);
 }
 
 function shoulderMaterial(theme: WorldGenerationConfig["theme"]) {
@@ -297,7 +302,7 @@ function shoulderMaterial(theme: WorldGenerationConfig["theme"]) {
 
 export function applyRoadSurfaceTreatment(
   terrain: TerrainData,
-  roads: { points: { x: number; y: number; z: number }[]; width: number; closedLoop?: boolean }[],
+  roads: PathDefinition[],
   seed: number,
   theme: WorldGenerationConfig["theme"],
 ) {

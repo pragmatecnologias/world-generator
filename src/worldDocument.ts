@@ -14,7 +14,11 @@ import type {
 } from "./types";
 import { applyTerrainBrush } from "./viewport/terrain";
 
-export const WORLD_DOCUMENT_SCHEMA_VERSION = "1.0.0";
+export type PathDefinition = RoadDefinition;
+export type ZoneDefinition = ScatterZone;
+export type PlacementGroupDefinition = FoliageGroup;
+
+export const WORLD_DOCUMENT_SCHEMA_VERSION = "2.0.0";
 
 export type WorldDocument = {
   schemaVersion: string;
@@ -37,9 +41,9 @@ export type WorldDocument = {
   materials: TerrainMaterial[];
   assets: AssetDefinition[];
   objects: PlacedObject[];
-  foliage: FoliageGroup[];
-  scatter: ScatterZone[];
-  roads: RoadDefinition[];
+  placementGroups: FoliageGroup[];
+  zones: ScatterZone[];
+  paths: RoadDefinition[];
   markers: GameplayMarker[];
   layers: LayerDefinition[];
   environment: EnvironmentSettings;
@@ -48,6 +52,12 @@ export type WorldDocument = {
     lastEditedBy: string;
     tags: string[];
   };
+  /** @deprecated legacy compatibility alias populated for older code paths. */
+  foliage?: FoliageGroup[];
+  /** @deprecated legacy compatibility alias populated for older code paths. */
+  scatter?: ScatterZone[];
+  /** @deprecated legacy compatibility alias populated for older code paths. */
+  roads?: RoadDefinition[];
   validation: {
     lastRunAt?: string;
     status?: "REAL" | "PARTIAL" | "FAKE" | "MISSING";
@@ -99,7 +109,7 @@ export type WorldOperation =
   | { type: "updateEnvironment"; payload: Partial<EnvironmentSettings> };
 
 export function worldProjectToDocument(project: WorldProject): WorldDocument {
-  return {
+  const document: WorldDocument = {
     schemaVersion: WORLD_DOCUMENT_SCHEMA_VERSION,
     project: {
       id: project.id,
@@ -121,9 +131,9 @@ export function worldProjectToDocument(project: WorldProject): WorldDocument {
     materials: project.materials,
     assets: project.assets,
     objects: project.objects,
-    foliage: project.foliageGroups,
-    scatter: project.scatterZones,
-    roads: project.roads,
+    placementGroups: project.foliageGroups,
+    zones: project.scatterZones,
+    paths: project.roads,
     markers: project.markers,
     layers: project.layers,
     environment: project.environment,
@@ -134,42 +144,89 @@ export function worldProjectToDocument(project: WorldProject): WorldDocument {
     },
     validation: {},
   };
+  return attachLegacyAliases(document);
+}
+
+export function worldProjectToPaths(project: WorldProject): PathDefinition[] {
+  return project.roads.map((road) => ({ ...road, points: road.points.map((point) => ({ ...point })) }));
+}
+
+export function worldProjectToZones(project: WorldProject): ZoneDefinition[] {
+  return project.scatterZones.map((zone) => ({ ...zone, points: zone.points.map((point) => ({ ...point })) }));
+}
+
+export function worldProjectToPlacementGroups(project: WorldProject): PlacementGroupDefinition[] {
+  return project.foliageGroups.map((group) => ({
+    ...group,
+    assetIds: [...group.assetIds],
+    instances: group.instances.map((instance) => ({
+      ...instance,
+      position: { ...instance.position },
+      rotation: { ...instance.rotation },
+      scale: { ...instance.scale },
+    })),
+    settings: { ...group.settings },
+  }));
 }
 
 export function worldDocumentToProject(document: WorldDocument): WorldProject {
+  const canonical = normalizeWorldDocument(document);
   return {
-    id: document.project.id,
-    name: document.project.name,
-    version: document.project.version,
-    createdAt: document.project.createdAt,
-    updatedAt: document.project.updatedAt,
+    id: canonical.project.id,
+    name: canonical.project.name,
+    version: canonical.project.version,
+    createdAt: canonical.project.createdAt,
+    updatedAt: canonical.project.updatedAt,
     terrain: {
-      width: document.terrain.width,
-      depth: document.terrain.depth,
-      resolution: document.terrain.resolution,
-      heights: document.terrain.heights,
-      materialMap: document.terrain.materialMap,
+      width: canonical.terrain.width,
+      depth: canonical.terrain.depth,
+      resolution: canonical.terrain.resolution,
+      heights: canonical.terrain.heights,
+      materialMap: canonical.terrain.materialMap,
     },
-    materials: document.materials,
-    assets: document.assets,
-    objects: document.objects,
-    foliageGroups: document.foliage,
-    scatterZones: document.scatter,
-    roads: document.roads,
-    markers: document.markers,
-    layers: document.layers,
-    environment: document.environment,
+    materials: canonical.materials,
+    assets: canonical.assets,
+    objects: canonical.objects,
+    foliageGroups: canonical.placementGroups,
+    scatterZones: canonical.zones,
+    roads: canonical.paths,
+    markers: canonical.markers,
+    layers: canonical.layers,
+    environment: canonical.environment,
     metadata: {
-      description: document.project.description,
+      description: canonical.project.description,
     },
   };
 }
 
+export function worldDocumentToPaths(document: WorldDocument): PathDefinition[] {
+  return normalizeWorldDocument(document).paths.map((road) => ({ ...road, points: road.points.map((point) => ({ ...point })) }));
+}
+
+export function worldDocumentToZones(document: WorldDocument): ZoneDefinition[] {
+  return normalizeWorldDocument(document).zones.map((zone) => ({ ...zone, points: zone.points.map((point) => ({ ...point })) }));
+}
+
+export function worldDocumentToPlacementGroups(document: WorldDocument): PlacementGroupDefinition[] {
+  return normalizeWorldDocument(document).placementGroups.map((group) => ({
+    ...group,
+    assetIds: [...group.assetIds],
+    instances: group.instances.map((instance) => ({
+      ...instance,
+      position: { ...instance.position },
+      rotation: { ...instance.rotation },
+      scale: { ...instance.scale },
+    })),
+    settings: { ...group.settings },
+  }));
+}
+
 export function validateWorldDocumentIntegrity(document: WorldDocument): string[] {
+  const normalized = normalizeWorldDocument(document);
   const issues: string[] = [];
-  const assetIds = new Set(document.assets.map((asset) => asset.id));
-  const layerIds = new Set(document.layers.map((layer) => layer.id));
-  const materialIds = new Set(document.materials.map((material) => material.id));
+  const assetIds = new Set(normalized.assets.map((asset) => asset.id));
+  const layerIds = new Set(normalized.layers.map((layer) => layer.id));
+  const materialIds = new Set(normalized.materials.map((material) => material.id));
   const seenIds = new Set<string>();
 
   const ensureUnique = (id: string, label: string) => {
@@ -177,37 +234,71 @@ export function validateWorldDocumentIntegrity(document: WorldDocument): string[
     seenIds.add(id);
   };
 
-  document.objects.forEach((object) => {
+  normalized.objects.forEach((object) => {
     ensureUnique(object.id, "object");
     if (!assetIds.has(object.assetId)) issues.push(`object ${object.id} missing asset ${object.assetId}`);
     if (!layerIds.has(object.layerId)) issues.push(`object ${object.id} missing layer ${object.layerId}`);
   });
-  document.foliage.forEach((group) => {
+  normalized.placementGroups.forEach((group) => {
     ensureUnique(group.id, "foliage-group");
     group.instances.forEach((instance) => {
       ensureUnique(instance.id, "foliage-instance");
       if (!assetIds.has(instance.assetId)) issues.push(`foliage instance ${instance.id} missing asset ${instance.assetId}`);
     });
   });
-  document.scatter.forEach((zone) => {
+  normalized.zones.forEach((zone) => {
     ensureUnique(zone.id, "scatter-zone");
     zone.generatedObjectIds.forEach((id) => {
-      if (!document.objects.some((object) => object.id === id)) issues.push(`scatter zone ${zone.id} missing generated object ${id}`);
+      if (!normalized.objects.some((object) => object.id === id)) issues.push(`zone ${zone.id} missing generated object ${id}`);
     });
   });
-  document.roads.forEach((road) => {
+  normalized.paths.forEach((road) => {
     ensureUnique(road.id, "road");
-    if (!materialIds.has(road.materialId)) issues.push(`road ${road.id} missing material ${road.materialId}`);
+    if (!materialIds.has(road.materialId)) issues.push(`path ${road.id} missing material ${road.materialId}`);
   });
-  document.markers.forEach((marker) => ensureUnique(marker.id, "marker"));
-  document.layers.forEach((layer) => ensureUnique(layer.id, "layer"));
+  normalized.markers.forEach((marker) => ensureUnique(marker.id, "marker"));
+  normalized.layers.forEach((layer) => ensureUnique(layer.id, "layer"));
 
-  const expected = document.terrain.resolution * document.terrain.resolution;
-  if (document.terrain.heights.length !== expected) issues.push("terrain heightData length mismatch resolution");
-  if (document.terrain.materialMap.length !== expected) issues.push("terrain materialMap length mismatch resolution");
+  const expected = normalized.terrain.resolution * normalized.terrain.resolution;
+  if (normalized.terrain.heights.length !== expected) issues.push("terrain heightData length mismatch resolution");
+  if (normalized.terrain.materialMap.length !== expected) issues.push("terrain materialMap length mismatch resolution");
 
   return issues;
 }
+
+export function normalizeWorldDocument(document: WorldDocument): WorldDocument {
+  const paths = document.paths ?? document.roads ?? [];
+  const zones = document.zones ?? document.scatter ?? [];
+  const placementGroups = document.placementGroups ?? document.foliage ?? [];
+  const normalized: WorldDocument = {
+    ...document,
+    schemaVersion: WORLD_DOCUMENT_SCHEMA_VERSION,
+    paths,
+    zones,
+    placementGroups,
+    roads: paths,
+    scatter: zones,
+    foliage: placementGroups,
+  };
+  return attachLegacyAliases(normalized);
+}
+
+function attachLegacyAliases<T extends WorldDocument>(document: T): T {
+  const aliases: Record<string, () => unknown> = {
+    roads: () => document.paths,
+    scatter: () => document.zones,
+    foliage: () => document.placementGroups,
+  };
+  for (const [key, getter] of Object.entries(aliases)) {
+    Object.defineProperty(document, key, {
+      enumerable: false,
+      configurable: true,
+      get: getter,
+    });
+  }
+  return document;
+}
+
 
 export function applyWorldOperation(document: WorldDocument, operation: WorldOperation): WorldDocument {
   const next = structuredClone(document);
@@ -311,50 +402,50 @@ export function applyWorldOperation(document: WorldDocument, operation: WorldOpe
       next.objects = next.objects.map((object) => (object.id === operation.targetId ? { ...object, scale: operation.payload } : object));
       break;
     case "addFoliageGroup":
-      next.foliage.push(operation.payload);
+      next.placementGroups.push(operation.payload);
       break;
     case "updateFoliageGroup":
-      next.foliage = next.foliage.map((group) => (group.id === operation.targetId ? { ...group, ...operation.payload } : group));
+      next.placementGroups = next.placementGroups.map((group) => (group.id === operation.targetId ? { ...group, ...operation.payload } : group));
       break;
     case "removeFoliageGroup":
-      next.foliage = next.foliage.filter((group) => group.id !== operation.targetId);
+      next.placementGroups = next.placementGroups.filter((group) => group.id !== operation.targetId);
       break;
     case "addFoliageInstances":
-      next.foliage = next.foliage.map((group) => (group.id === operation.targetId ? { ...group, instances: [...group.instances, ...operation.payload] } : group));
+      next.placementGroups = next.placementGroups.map((group) => (group.id === operation.targetId ? { ...group, instances: [...group.instances, ...operation.payload] } : group));
       break;
     case "removeFoliageInstances":
-      next.foliage = next.foliage.map((group) => (group.id === operation.targetId ? { ...group, instances: group.instances.filter((entry) => !operation.payload.ids.includes(entry.id)) } : group));
+      next.placementGroups = next.placementGroups.map((group) => (group.id === operation.targetId ? { ...group, instances: group.instances.filter((entry) => !operation.payload.ids.includes(entry.id)) } : group));
       break;
     case "addScatterZone":
-      next.scatter.push(operation.payload);
+      next.zones.push(operation.payload);
       break;
     case "updateScatterZone":
-      next.scatter = next.scatter.map((zone) => (zone.id === operation.targetId ? { ...zone, ...operation.payload } : zone));
+      next.zones = next.zones.map((zone) => (zone.id === operation.targetId ? { ...zone, ...operation.payload } : zone));
       break;
     case "removeScatterZone":
-      next.scatter = next.scatter.filter((zone) => zone.id !== operation.targetId);
+      next.zones = next.zones.filter((zone) => zone.id !== operation.targetId);
       break;
     case "addRoad":
-      next.roads.push(operation.payload);
+      next.paths.push(operation.payload);
       break;
     case "updateRoad":
-      next.roads = next.roads.map((road) => (road.id === operation.targetId ? { ...road, ...operation.payload } : road));
+      next.paths = next.paths.map((road) => (road.id === operation.targetId ? { ...road, ...operation.payload } : road));
       break;
     case "removeRoad":
-      next.roads = next.roads.filter((road) => road.id !== operation.targetId);
+      next.paths = next.paths.filter((road) => road.id !== operation.targetId);
       break;
     case "addRoadPoint":
-      next.roads = next.roads.map((road) => (road.id === operation.targetId ? { ...road, points: [...road.points, operation.payload] } : road));
+      next.paths = next.paths.map((road) => (road.id === operation.targetId ? { ...road, points: [...road.points, operation.payload] } : road));
       break;
     case "updateRoadPoint":
-      next.roads = next.roads.map((road) =>
+      next.paths = next.paths.map((road) =>
         road.id === operation.targetId
           ? { ...road, points: road.points.map((point, index) => (index === operation.payload.index ? operation.payload.point : point)) }
           : road,
       );
       break;
     case "removeRoadPoint":
-      next.roads = next.roads.map((road) => (road.id === operation.targetId ? { ...road, points: road.points.filter((_, index) => index !== operation.payload.index) } : road));
+      next.paths = next.paths.map((road) => (road.id === operation.targetId ? { ...road, points: road.points.filter((_, index) => index !== operation.payload.index) } : road));
       break;
     case "addMarker":
       next.markers.push(operation.payload);

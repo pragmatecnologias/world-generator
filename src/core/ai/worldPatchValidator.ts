@@ -9,8 +9,14 @@ export function validateAiPatch(patch: WorldPatch): string[] {
       if (patch.value.width !== undefined && patch.value.width <= 0) issues.push("terrain width must be positive");
       if (patch.value.depth !== undefined && patch.value.depth <= 0) issues.push("terrain depth must be positive");
       break;
+    case "addPath":
     case "addRoad":
       if (!patch.value.points?.length) issues.push("road must contain points");
+      break;
+    case "updatePath":
+    case "removePath":
+      break;
+    case "addPlacementZone":
       break;
     case "placeAsset":
       if (!patch.assetId) issues.push("assetId is required");
@@ -19,6 +25,7 @@ export function validateAiPatch(patch: WorldPatch): string[] {
       if (!patch.tag) issues.push("tag is required");
       if (patch.count <= 0) issues.push("count must be greater than 0");
       break;
+    case "addZone":
     case "setEnvironment":
     case "updateProjectMetadata":
     case "addBiome":

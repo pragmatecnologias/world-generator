@@ -64,7 +64,7 @@ type Props = {
 
 type SceneObjectRecord = {
   object: THREE.Object3D;
-  source: "placed" | "foliage" | "marker" | "road";
+  source: "placed" | "foliage" | "marker" | "path" | "zone";
 };
 
 function makePlaceholderMesh(asset: AssetDefinition) {
@@ -108,7 +108,7 @@ function cloneAssetObject(asset: AssetDefinition, loadedAsset: THREE.Object3D | 
   return root;
 }
 
-function createRoadMesh(road: RoadDefinition, terrain: TerrainData) {
+function createPathMesh(road: RoadDefinition, terrain: TerrainData) {
   if (road.points.length < 2) return null;
   const positions: number[] = [];
   const indices: number[] = [];
@@ -157,7 +157,9 @@ function createRoadMesh(road: RoadDefinition, terrain: TerrainData) {
   return new THREE.Mesh(geometry, material);
 }
 
-function buildScatterPreview(zone: ScatterZone) {
+const createRoadMesh = createPathMesh;
+
+function buildZonePreview(zone: ScatterZone) {
   const points = zone.points.map((point) => new THREE.Vector3(point.x, point.y, point.z));
   if (points.length < 2) return null;
   const minX = Math.min(points[0].x, points[1].x);
@@ -175,6 +177,8 @@ function buildScatterPreview(zone: ScatterZone) {
   const material = new THREE.MeshBasicMaterial({ color: "#38bdf8", transparent: true, opacity: 0.14, side: THREE.DoubleSide });
   return new THREE.Mesh(geometry, material);
 }
+
+const buildScatterPreview = buildZonePreview;
 
 export default function ThreeViewport({
   project,
@@ -208,6 +212,8 @@ export default function ThreeViewport({
   const [assetReady, setAssetReady] = useState(0);
 
   const terrain = useMemo(() => project.terrain, [project.terrain]);
+  const isPathTool = activeTool === "road-draw" || activeTool === "path-draw";
+  const isZoneTool = activeTool === "scatter" || activeTool === "zone-scatter";
 
   useEffect(() => {
     const loader = new GLTFLoader();
@@ -400,12 +406,13 @@ export default function ThreeViewport({
       });
 
       project.roads.forEach((road) => {
-        const roadMesh = createRoadMesh(road, terrain);
+        const roadMesh = createPathMesh(road, terrain);
         if (roadMesh) {
-          roadMesh.userData.kind = "road";
+          roadMesh.userData.kind = "path";
+          roadMesh.userData.pathId = road.id;
           roadMesh.userData.roadId = road.id;
           scene.add(roadMesh);
-          objectMapRef.current.set(road.id, { object: roadMesh, source: "road" });
+          objectMapRef.current.set(road.id, { object: roadMesh, source: "path" });
         }
       });
 
@@ -413,7 +420,7 @@ export default function ThreeViewport({
         const latest = project.scatterZones[project.scatterZones.length - 1];
         const scatterMesh = buildScatterPreview(latest);
         if (scatterMesh) {
-          scatterMesh.userData.kind = "scatter-zone";
+          scatterMesh.userData.kind = "zone";
           scatterMesh.userData.zoneId = latest.id;
           scene.add(scatterMesh);
           scatterPreviewRef.current = scatterMesh;
@@ -470,10 +477,10 @@ export default function ThreeViewport({
         return;
       }
       let object = intersection.object;
-      while (object.parent && !object.userData.objectId && !object.userData.markerId && !object.userData.roadId && !object.userData.zoneId) {
+      while (object.parent && !object.userData.objectId && !object.userData.markerId && !object.userData.pathId && !object.userData.roadId && !object.userData.zoneId) {
         object = object.parent;
       }
-      const objectId = object.userData.objectId ?? object.userData.markerId ?? object.userData.roadId ?? object.userData.zoneId;
+      const objectId = object.userData.objectId ?? object.userData.markerId ?? object.userData.pathId ?? object.userData.roadId ?? object.userData.zoneId;
       if (objectId) {
         onSelectObject(String(objectId));
         updateSelectionRing(object.position.clone(), object);
@@ -583,17 +590,17 @@ export default function ThreeViewport({
     };
 
     const updateRoadTerrain = (center: THREE.Vector3) => {
-      if (activeTool !== "road-draw") return;
-      const road = project.roads[project.roads.length - 1];
-      if (!road || !road.flattenTerrain) return;
+      if (!isPathTool) return;
+      const path = project.roads[project.roads.length - 1];
+      if (!path || !path.flattenTerrain) return;
       const nextTerrain = applyTerrainBrush(
         terrain,
         center,
         {
-          size: road.width * 0.6,
+          size: path.width * 0.6,
           strength: 1,
           falloff: "smooth",
-          materialId: road.materialId,
+          materialId: path.materialId,
           flattenHeight: center.y,
         },
         "flatten",
@@ -628,7 +635,7 @@ export default function ThreeViewport({
         if (pendingPaintRef.current.active && activeTool.startsWith("terrain-")) {
           paintTerrainAt(terrainHit.point);
         }
-        if (pendingPaintRef.current.active && activeTool === "road-draw") {
+        if (pendingPaintRef.current.active && isPathTool) {
           updateRoadTerrain(terrainHit.point);
         }
         if (pendingPaintRef.current.active && (activeTool === "foliage-paint" || activeTool === "foliage-erase")) {
@@ -658,23 +665,23 @@ export default function ThreeViewport({
           const hit = sampleTerrainHeight(terrainHit.point, terrain);
           onSelectTerrainCell({ x: hit.gridX, z: hit.gridZ });
         }
-      } else if (activeTool === "road-draw" && terrainHit) {
+      } else if (isPathTool && terrainHit) {
         const point = terrainHit.point;
-        const road = project.roads[project.roads.length - 1];
-        if (road) {
+        const path = project.roads[project.roads.length - 1];
+        if (path) {
           onProjectChange((current) => ({
             ...current,
             updatedAt: new Date().toISOString(),
             roads: current.roads.map((entry) =>
-              entry.id === road.id
+              entry.id === path.id
                 ? { ...entry, points: [...entry.points, { x: point.x, y: point.y, z: point.z }] }
                 : entry,
             ),
           }));
           updateRoadTerrain(point);
-          onStatus(`Added road point to ${road.name}`);
+          onStatus(`Added path point to ${path.name}`);
         }
-      } else if (activeTool === "scatter" && terrainHit) {
+      } else if (isZoneTool && terrainHit) {
         const point = terrainHit.point;
         const zone = project.scatterZones[project.scatterZones.length - 1];
         if (!zone || zone.points.length >= 2) {

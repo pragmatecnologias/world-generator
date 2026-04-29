@@ -212,6 +212,9 @@ export function isPointNearRoad(point: THREE.Vector3, roads: { points: { x: numb
   return false;
 }
 
+export const isPointNearPath = isPointNearRoad;
+export const isPointNearPathOrRoad = isPointNearRoad;
+
 export function flattenRoadTerrain(
   terrain: TerrainData,
   roads: { points: { x: number; y: number; z: number }[]; width: number; flattenTerrain: boolean; closedLoop?: boolean }[],
@@ -262,6 +265,9 @@ export function flattenRoadTerrain(
 
   return next;
 }
+
+export const flattenPathTerrain = flattenRoadTerrain;
+export const flattenPathOrRoadTerrain = flattenRoadTerrain;
 
 export function terrainSlopeAt(point: THREE.Vector3, terrain: TerrainData) {
   const { gridX, gridZ } = terrainWorldToGrid(point, terrain);

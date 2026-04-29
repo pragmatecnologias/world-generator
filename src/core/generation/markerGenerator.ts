@@ -1,7 +1,8 @@
-import type { GameplayMarker, RoadDefinition } from "../../types";
+import type { GameplayMarker } from "../../types";
+import type { PathDefinition } from "../schema/CoreWorldSchema";
 import type { WorldGenerationConfig } from "../schema/WorldConfigSchema";
 
-export function generateMarkers(config: WorldGenerationConfig, roads: RoadDefinition[]) {
+export function generateMarkers(config: WorldGenerationConfig, roads: PathDefinition[]) {
   const markers: GameplayMarker[] = [];
   const road = roads[0];
   if (!road) return markers;
@@ -48,4 +49,3 @@ export function generateMarkers(config: WorldGenerationConfig, roads: RoadDefini
 
   return markers;
 }
-

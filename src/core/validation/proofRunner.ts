@@ -25,7 +25,7 @@ export function runProofRun(project: WorldProject, context: ProofContext): Proof
   const validationStrictPass = localValidation.every((entry) => entry.status === "REAL");
   const foliageCount = project.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0);
   const customAssetReady = project.assets.some((asset) => Boolean(asset.fileDataUrl) && asset.filePath !== "built-in");
-  const roadHasCurve = project.roads.some((road) => road.points.length >= 3 && road.id !== "road-demo");
+  const pathHasCurve = project.roads.some((road) => road.points.length >= 3 && road.id !== "road-demo");
   const checkpoints = project.markers.filter((marker) => marker.type === "checkpoint").length;
   const userPlacedObjects = project.objects.filter((object) => !object.id.startsWith("obj-demo")).length;
   const scatterGenerated = project.scatterZones.reduce((sum, zone) => sum + zone.generatedObjectIds.length, 0);
@@ -45,9 +45,9 @@ export function runProofRun(project: WorldProject, context: ProofContext): Proof
     step("terrain-edited", "Terrain sculpted and painted", new Set(project.terrain.materialMap).size >= 4 && stableHash(project.terrain.heights) !== stableHash(createDefaultProject().terrain.heights), "terrain", "Terrain must differ from starter and include diverse materials"),
     step("asset-import", "Custom asset imported", customAssetReady, "assets", "Needs imported GLB/GLTF source data"),
     step("object-flow", "Manual placement + transform flow", userPlacedObjects >= 1, "objects", "Needs at least one user-placed object"),
-    step("foliage-flow", "Foliage paint/erase flow", foliageCount >= 50, "foliage", "Needs meaningful foliage density"),
-    step("scatter-flow", "Scatter generation flow", scatterGenerated >= 20, "scatter", "Needs applied scatter output"),
-    step("road-flow", "Road draw/edit flow", roadHasCurve, "roads", "Needs drawn/edited road points"),
+    step("foliage-flow", "Placement paint/erase flow", foliageCount >= 50, "placement", "Needs meaningful placement density"),
+    step("scatter-flow", "Zone generation flow", scatterGenerated >= 20, "zone", "Needs applied zone output"),
+    step("road-flow", "Path draw/edit flow", pathHasCurve, "path", "Needs drawn/edited path points"),
     step("marker-flow", "Start/finish + checkpoints", project.markers.some((marker) => marker.type === "start-finish") && checkpoints >= 3, "markers", "Needs race markers"),
     step("save-reload", "Save/reload persistence", context.persisted, "save-load", "Project should be saved in local storage"),
     step("export-valid", "Export contract validity", exportValidation.valid, "export", exportValidation.valid ? "Export package valid" : exportValidation.errors.join(", ")),

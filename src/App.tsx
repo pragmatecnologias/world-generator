@@ -12,7 +12,7 @@ import type {
 } from "./types";
 import { buildWorldExportPackage, exportWorld, loadProjectFromStorage, validateExportPackage } from "./core/export";
 import { validateProject } from "./core/validation";
-import { flattenRoadTerrain } from "./viewport/terrain";
+import { flattenPathTerrain } from "./viewport/terrain";
 import PreviewApp from "./PreviewApp";
 import { generateWorld } from "./core/generation/generateWorld";
 import { DEFAULT_WORLD_GENERATION_CONFIG, type WorldGenerationConfig } from "./core/schema/WorldConfigSchema";
@@ -24,11 +24,10 @@ import { applyAiWorldCommand } from "./core/ai/applyAiWorldCommand";
 import type { AiWorldCommand } from "./core/ai/aiWorldCommandSchema";
 import { validateAiWorldCommand } from "./core/ai/aiWorldCommandValidator";
 import {
-  applyScatterZoneToProject,
   buildAutoJsonProofProject,
   buildAutoAssetProofProject,
   buildAutoFullScenarioProject,
-  clearFoliageAroundRoads as clearFoliageAroundRoadsCore,
+  clearPlacementAroundPaths as clearPlacementAroundPathsCore,
   createProofPreviewHash,
   generateProofTerrain,
 } from "./core/generation/editorWorkflows";
@@ -54,15 +53,16 @@ import {
   buildImportedAssetDefinition,
   deleteObjectById,
   duplicateObjectById,
-  generateScatterForZone,
+  generateZoneForProject,
   patchAssetById,
   patchObjectById,
-  patchRoadById,
-  patchRoadPointById,
+  patchPathById,
+  patchPathPointById,
 } from "./core/editor/projectMutations";
 import { runProofRun } from "./core/validation/proofRunner";
 import {
   applyWorldOperation,
+  normalizeWorldDocument,
   validateWorldDocumentIntegrity,
   worldDocumentToProject,
   worldProjectToDocument,
@@ -98,9 +98,9 @@ const terrainTools: { id: EditorTool; label: string }[] = [
   { id: "terrain-flatten", label: "Flatten" },
   { id: "terrain-paint", label: "Paint" },
   { id: "asset-place", label: "Assets" },
-  { id: "foliage-paint", label: "Foliage" },
-  { id: "scatter", label: "Scatter" },
-  { id: "road-draw", label: "Road" },
+  { id: "foliage-paint", label: "Placement" },
+  { id: "zone-scatter", label: "Zone" },
+  { id: "path-draw", label: "Path" },
   { id: "marker-place", label: "Markers" },
 ];
 
@@ -389,15 +389,16 @@ function EditorApp() {
   };
 
   const applyWorldDocument = (document: WorldDocument, message: string) => {
-    const issues = validateWorldDocumentIntegrity(document);
+    const normalized = normalizeWorldDocument(document);
+    const issues = validateWorldDocumentIntegrity(normalized);
     setJsonIntegrityIssues(issues);
     if (issues.length > 0) {
       setJsonStatus(`WorldDocument integrity errors: ${issues.join(" | ")}`);
       return;
     }
-    const nextProject = worldDocumentToProject(document);
-    setWorldDocument(document);
-    setJsonWorldDraft(JSON.stringify(document, null, 2));
+    const nextProject = worldDocumentToProject(normalized);
+    setWorldDocument(normalized);
+    setJsonWorldDraft(JSON.stringify(normalized, null, 2));
     setProject(nextProject);
     setHistory((past) => [...past, project].slice(-50));
     setFuture([]);
@@ -526,7 +527,7 @@ function EditorApp() {
   };
 
   const runAutoJsonProofScenario = () => {
-    applyWorldDocument(buildAutoJsonProofProject(worldDocument), "Auto JSON proof scenario applied");
+      applyWorldDocument(buildAutoJsonProofProject(worldDocument), "Auto JSON proof scenario applied");
     proofSaveAndReload();
     onExport();
     setBottomTab("validation");
@@ -829,28 +830,28 @@ function EditorApp() {
 
   const updateActiveRoad = (patch: Partial<WorldProject["roads"][number]>) => {
     if (!activeRoad) return;
-    commit((current) => patchRoadById(current, activeRoad.id, patch));
+    commit((current) => patchPathById(current, activeRoad.id, patch));
   };
 
   const updateActiveRoadPoint = (pointIndex: number, patch: Partial<WorldProject["roads"][number]["points"][number]>) => {
     if (!activeRoad) return;
-    commit((current) => patchRoadPointById(current, activeRoad.id, pointIndex, patch));
+    commit((current) => patchPathPointById(current, activeRoad.id, pointIndex, patch));
   };
 
   const applyScatter = () => {
     const zone = project.scatterZones[project.scatterZones.length - 1];
     if (!zone || zone.points.length < 2) {
-      setStatusMessage("Define a scatter area with two clicks first");
+      setStatusMessage("Define a zone area with two clicks first");
       return;
     }
-    commit((current) => generateScatterForZone(current, zone.id, `${zone.id}:${zone.name}:${zone.settings.count}:${zone.settings.minSpacing}`));
-    setStatusMessage(`Scatter generated from ${zone.name}`);
+    commit((current) => generateZoneForProject(current, zone.id, `${zone.id}:${zone.name}:${zone.settings.count}:${zone.settings.minSpacing}`));
+    setStatusMessage(`Zone generated from ${zone.name}`);
   };
 
   const regenerateScatter = () => {
     const zone = project.scatterZones[project.scatterZones.length - 1];
     if (!zone) {
-      setStatusMessage("No scatter zone to regenerate");
+      setStatusMessage("No zone to regenerate");
       return;
     }
     commit((current) => ({
@@ -859,7 +860,7 @@ function EditorApp() {
       objects: current.objects.filter((object) => !zone.generatedObjectIds.includes(object.id)),
       scatterZones: current.scatterZones.map((entry) => (entry.id === zone.id ? { ...entry, generatedObjectIds: [] } : entry)),
     }));
-    setStatusMessage("Scatter zone reset. Apply Scatter to regenerate.");
+    setStatusMessage("Zone reset. Apply Zone to regenerate.");
   };
 
   const generateTerrainMacro = () => {
@@ -872,8 +873,8 @@ function EditorApp() {
   };
 
   const clearFoliageAroundRoads = () => {
-    commit((current) => clearFoliageAroundRoadsCore(current));
-    setStatusMessage("Cleared foliage around roads");
+    commit((current) => clearPlacementAroundPathsCore(current));
+    setStatusMessage("Cleared placement around paths");
   };
 
   const runProof = () => {
@@ -915,7 +916,7 @@ function EditorApp() {
       setHasUnsavedChanges(false);
       setSelectedAssetId(importedAsset?.id ?? next.assets[0]?.id);
       setSelectionObjectId(next.objects[next.objects.length - 1]?.id ?? next.objects[0]?.id);
-      setStatusMessage("Auto full scenario applied (terrain, objects, foliage, scatter, roads, markers)");
+      setStatusMessage("Auto full scenario applied (terrain, objects, placement, zones, paths, markers)");
       setOperationHistory((current) => [
         ...current.slice(-49),
         `${new Date().toISOString()} :: ran deterministic auto full proof`,
@@ -1066,7 +1067,7 @@ function EditorApp() {
             <span className={`status-pill status-${overallStatus}`}>{overallStatus}</span>
             {hasUnsavedChanges ? <span className="status-pill status-PARTIAL">UNSAVED</span> : null}
           </div>
-          <div className="muted">Terrain, assets, roads, foliage, and runtime preview in one workspace.</div>
+          <div className="muted">Terrain, assets, paths, placement, and runtime preview in one workspace.</div>
         </div>
         <div className="topbar-actions">
           <div className="toolbar-group toolbar-primary">
@@ -1103,7 +1104,7 @@ function EditorApp() {
           <div className="stats-row">
             <div className="stat-chip"><strong>{project.objects.length}</strong><span>objects</span></div>
             <div className="stat-chip"><strong>{project.assets.length}</strong><span>assets</span></div>
-            <div className="stat-chip"><strong>{project.roads.length}</strong><span>roads</span></div>
+            <div className="stat-chip"><strong>{project.roads.length}</strong><span>paths</span></div>
             <div className="stat-chip"><strong>{Math.round(viewportStats.fps)}</strong><span>fps</span></div>
             <div className="stat-chip"><strong>{viewportStats.drawCalls}</strong><span>draws</span></div>
           </div>
@@ -1316,7 +1317,7 @@ function EditorApp() {
           </div>
 
           <div className="section">
-            <h3>Foliage Paint <span className="muted">— {project.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0)} instances</span></h3>
+            <h3>Placement Groups <span className="muted">— {project.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0)} instances</span></h3>
             <div className="field">
               <label>Density: {foliageSettings.density}</label>
               <input type="range" min="1" max="30" step="1" value={foliageSettings.density} onChange={(event) => setFoliageSettings({ ...foliageSettings, density: Number(event.target.value) })} />
@@ -1338,12 +1339,12 @@ function EditorApp() {
             </div>
             <label className="panel-row"><input type="checkbox" checked={foliageSettings.randomRotation} onChange={(event) => setFoliageSettings({ ...foliageSettings, randomRotation: event.target.checked })} /> Random rotation</label>
             <label className="panel-row"><input type="checkbox" checked={foliageSettings.alignToTerrain} onChange={(event) => setFoliageSettings({ ...foliageSettings, alignToTerrain: event.target.checked })} /> Align to terrain</label>
-            <label className="panel-row"><input type="checkbox" checked={foliageSettings.avoidRoads} onChange={(event) => setFoliageSettings({ ...foliageSettings, avoidRoads: event.target.checked })} /> Avoid roads</label>
+            <label className="panel-row"><input type="checkbox" checked={foliageSettings.avoidRoads} onChange={(event) => setFoliageSettings({ ...foliageSettings, avoidRoads: event.target.checked })} /> Avoid paths</label>
             <label className="panel-row"><input type="checkbox" checked={foliageSettings.eraseMode} onChange={(event) => setFoliageSettings({ ...foliageSettings, eraseMode: event.target.checked })} /> Erase mode</label>
           </div>
 
           <div className="section">
-            <h3>Scatter</h3>
+            <h3>Zone Scatter</h3>
             <div className="field">
               <label>Asset: {selectedAssetId ? (project.assets.find((a) => a.id === selectedAssetId)?.name ?? "Unknown") : "All paintable assets"}</label>
               <div className="chip-row" style={{ marginTop: "0.25rem" }}>
@@ -1387,14 +1388,14 @@ function EditorApp() {
             <div className="chip-row" style={{ marginTop: "0.5rem" }}>
               <button onClick={applyScatter} disabled={!project.scatterZones.length || project.scatterZones[project.scatterZones.length - 1]?.points.length < 2}>Apply ({scatterSettings.count})</button>
               <button onClick={regenerateScatter}>Regenerate</button>
-              <button onClick={() => setActiveTool("scatter")}>Scatter Tool</button>
+              <button onClick={() => setActiveTool("zone-scatter")}>Zone Tool</button>
             </div>
           </div>
 
           <div className="section">
-            <h3>Road</h3>
+            <h3>Path</h3>
             <div className="field">
-              <label>Selected Road</label>
+              <label>Selected Path</label>
               <select value={activeRoad?.id ?? ""} onChange={(event) => {
                 const road = project.roads.find((item) => item.id === event.target.value);
                 if (road) setStatusMessage(`Selected ${road.name}`);
@@ -1423,9 +1424,9 @@ function EditorApp() {
                 <label className="panel-row"><input type="checkbox" checked={activeRoad.flattenTerrain} onChange={(event) => updateActiveRoad({ flattenTerrain: event.target.checked })} /> Flatten terrain</label>
                 <label className="panel-row"><input type="checkbox" checked={activeRoad.smoothEdges} onChange={(event) => updateActiveRoad({ smoothEdges: event.target.checked })} /> Smooth edges</label>
                 <div className="chip-row" style={{ marginTop: "0.5rem" }}>
-                  <button onClick={() => setActiveTool("road-draw")}>Road Draw</button>
+                  <button onClick={() => setActiveTool("path-draw")}>Path Draw</button>
                   <button onClick={() => updateActiveRoad({ points: [] })}>Clear Points</button>
-                  <button onClick={clearFoliageAroundRoads}>Clear Foliage Near Road</button>
+                  <button onClick={clearFoliageAroundRoads}>Clear Placement Near Path</button>
                   <button
                     onClick={() =>
                       commit((current) => ({
@@ -1447,7 +1448,7 @@ function EditorApp() {
                   </button>
                 </div>
                 <div className="field">
-                  <label>Road Points</label>
+                  <label>Path Points</label>
                   <div className="list">
                     {activeRoad.points.map((point, index) => (
                       <div key={`${activeRoad.id}-${index}`} className="list-item">
@@ -1458,7 +1459,7 @@ function EditorApp() {
                         </div>
                       </div>
                     ))}
-                    {activeRoad.points.length === 0 ? <div className="muted">Click the viewport in Road Draw mode to add points.</div> : null}
+                    {activeRoad.points.length === 0 ? <div className="muted">Click the viewport in Path Draw mode to add points.</div> : null}
                   </div>
                 </div>
               </>
@@ -1469,7 +1470,7 @@ function EditorApp() {
                   commit((current) => {
                     const newRoad = {
                       id: crypto.randomUUID(),
-                      name: `Road ${current.roads.length + 1}`,
+                      name: `Path ${current.roads.length + 1}`,
                       points: [] as { x: number; y: number; z: number }[],
                       width: 4.5,
                       materialId: "track",
@@ -1479,7 +1480,7 @@ function EditorApp() {
                       checkpointIds: [] as string[],
                     };
                     const updatedRoads = [...current.roads, newRoad];
-                    const terrainPatch = flattenRoadTerrain(current.terrain, updatedRoads);
+                    const terrainPatch = flattenPathTerrain(current.terrain, updatedRoads);
                     return {
                       ...current,
                       updatedAt: new Date().toISOString(),
@@ -1489,7 +1490,7 @@ function EditorApp() {
                   })
                 }
               >
-                New Road
+                New Path
               </button>
               <button
                 onClick={() =>
@@ -1561,7 +1562,7 @@ function EditorApp() {
           <div className="viewport-frame">
             <div className="viewport-overlay">
               <div className="badge">Left-click terrain for brush tools. Select objects to use transform controls.</div>
-              <div className="badge">Road and scatter tools create visible world data that persists and exports.</div>
+              <div className="badge">Path and zone tools create visible world data that persists and exports.</div>
             </div>
           </div>
           <ThreeViewport
@@ -1669,7 +1670,7 @@ function EditorApp() {
                 <button onClick={() => setBrush((current) => ({ ...current, flattenHeight: selectedObject.position.y }))}>Snap flatten height</button>
               </div>
             ) : (
-              <div className="muted">Select an object, road, or marker to inspect its properties.</div>
+              <div className="muted">Select an object, path, or marker to inspect its properties.</div>
             )}
           </div>
 
@@ -1690,7 +1691,7 @@ function EditorApp() {
           <div className="section">
             <h3>Project</h3>
             <div className="muted code">{project.name}</div>
-            <div className="muted code">{project.objects.length} objects · {project.assets.length} assets · {project.roads.length} roads</div>
+            <div className="muted code">{project.objects.length} objects · {project.assets.length} assets · {project.roads.length} paths</div>
             <div className="chip-row" style={{ marginTop: "0.5rem" }}>
               <button onClick={() => onSave()}>Save Now</button>
               <button onClick={() => onExport()}>Export JSON</button>
@@ -1789,10 +1790,10 @@ function EditorApp() {
             <div className="list">
               <div className="field">
                 <label>Filter scene items</label>
-                <input type="text" value={sceneFilter} onChange={(event) => setSceneFilter(event.target.value)} placeholder="Search objects, roads, markers..." />
+                <input type="text" value={sceneFilter} onChange={(event) => setSceneFilter(event.target.value)} placeholder="Search objects, paths, markers..." />
               </div>
               <div className="list-item">
-                <div><strong>Foliage</strong></div>
+                <div><strong>Placement Groups</strong></div>
                 <div className="muted">{project.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0)} instances</div>
               </div>
               {project.objects.filter((object) => `${object.name} ${object.assetId} ${object.layerId}`.toLowerCase().includes(sceneFilter.toLowerCase())).map((object) => (
@@ -1804,7 +1805,7 @@ function EditorApp() {
               {project.roads.filter((road) => road.name.toLowerCase().includes(sceneFilter.toLowerCase())).map((road) => (
                 <div key={road.id} className="list-item">
                   <div><strong>{road.name}</strong></div>
-                  <div className="muted">Road · {road.points.length} points · width {road.width.toFixed(1)}</div>
+                  <div className="muted">Path · {road.points.length} points · width {road.width.toFixed(1)}</div>
                 </div>
               ))}
               {project.markers.filter((marker) => `${marker.name} ${marker.type}`.toLowerCase().includes(sceneFilter.toLowerCase())).map((marker) => (
@@ -1876,6 +1877,7 @@ function EditorApp() {
                 />
                 <div className="chip-row">
                   <button onClick={() => setWorldConfigDraft(JSON.stringify(DEFAULT_WORLD_GENERATION_CONFIG, null, 2))}>Load Default Config</button>
+                  <button onClick={() => setWorldConfigDraft(JSON.stringify({ ...DEFAULT_WORLD_GENERATION_CONFIG, generator: "city", theme: "forest", metadata: { ...(DEFAULT_WORLD_GENERATION_CONFIG.metadata ?? {}), description: "City generator preset" } }, null, 2))}>Load City Config</button>
                   <button onClick={applyGenerationConfigDraft}>Generate World</button>
                 </div>
                 <div className="muted">{worldConfigStatus}</div>
@@ -1907,9 +1909,9 @@ function EditorApp() {
                   placeholder='{"type":"generateOffroadTrack","seed":42,"difficulty":0.5}'
                 />
                 <div className="chip-row" style={{ marginBottom: "0.5rem" }}>
-                  <button onClick={() => setAiCommandDraft(JSON.stringify({ type: "generateOffroadTrack", seed: 42, difficulty: 0.5 }, null, 2))}>Load Track Generator</button>
+                  <button onClick={() => setAiCommandDraft(JSON.stringify({ type: "generateOffroadTrack", seed: 42, difficulty: 0.5 }, null, 2))}>Load Off-road Generator</button>
                   <button onClick={() => setAiCommandDraft(JSON.stringify({ type: "makeTerrainMoreDramatic", amount: 0.6, seed: 99 }, null, 2))}>Load Dramatic Terrain</button>
-                  <button onClick={() => setAiCommandDraft(JSON.stringify({ type: "addRockyBorder", density: 8, seed: 77 }, null, 2))}>Load Rocky Border</button>
+                  <button onClick={() => setAiCommandDraft(JSON.stringify({ type: "addRockyBorder", density: 8, seed: 77 }, null, 2))}>Load Border Rocks</button>
                   <button onClick={() => setAiCommandDraft(JSON.stringify({ type: "applyWorldPatch", patch: { op: "setEnvironment", value: { timeOfDay: "evening" } } }, null, 2))}>Load Patch Bridge</button>
                 </div>
                 <div className="chip-row">
@@ -1928,7 +1930,7 @@ function EditorApp() {
                 </div>
               </div>
               <div className="list-item">
-                <div><strong>WorldOperation patch JSON</strong></div>
+                <div><strong>WorldOperation / Core Patch JSON</strong></div>
                 <div className="chip-row" style={{ marginBottom: "0.5rem" }}>
                   <select value={jsonExample} onChange={(event) => setJsonExample(event.target.value)}>
                     <option value="add_rocks_near_track.json">add_rocks_near_track</option>

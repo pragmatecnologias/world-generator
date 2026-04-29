@@ -47,8 +47,8 @@ export default function PreviewApp() {
   const summary = useMemo(
     () => ({
       objects: project.objects.length,
-      foliage: project.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0),
-      roads: project.roads.length,
+      placement: project.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0),
+      paths: project.roads.length,
       markers: project.markers.length,
     }),
     [project],
@@ -123,7 +123,7 @@ export default function PreviewApp() {
             <div className="badge">This preview scene consumes exported world JSON.</div>
             <div className="badge">
               <strong>{project.name}</strong>
-              <span>{summary.objects} objects · {summary.foliage} foliage · {summary.roads} roads · {summary.markers} markers</span>
+              <span>{summary.objects} objects · {summary.placement} placement · {summary.paths} paths · {summary.markers} markers</span>
             </div>
           </div>
           <ThreeViewport

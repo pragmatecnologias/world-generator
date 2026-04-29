@@ -25,7 +25,7 @@ function hasUserPlacedObject(project: WorldProject) {
   return project.objects.some((object) => !object.id.startsWith("obj-demo") && object.assetId !== "demo-rock");
 }
 
-function hasUserRoad(project: WorldProject) {
+function hasUserPath(project: WorldProject) {
   return project.roads.some((road) => road.id !== "road-demo" && road.points.length >= 2)
     || project.roads.some((road) => road.id === "road-demo" && arraysDiffer(
       road.points.flatMap((point) => [point.x, point.y, point.z]),
@@ -33,7 +33,7 @@ function hasUserRoad(project: WorldProject) {
     ));
 }
 
-function hasUserFoliage(project: WorldProject) {
+function hasUserPlacement(project: WorldProject) {
   return project.foliageGroups.some((group) => group.instances.length > baseline.foliageGroups[0]?.instances.length || group.instances.some((instance) => instance.assetId !== "demo-tree"));
 }
 
@@ -73,8 +73,8 @@ export function validateProject(project: WorldProject, context: ValidationContex
   const terrainFlat = isTerrainFlat(project.terrain);
   const customAsset = hasCustomAsset(project);
   const placedObject = hasUserPlacedObject(project) || project.objects.some((object) => object.assetId !== "demo-rock");
-  const foliagePainted = hasUserFoliage(project);
-  const roadEdited = hasUserRoad(project);
+  const placementPainted = hasUserPlacement(project);
+  const pathEdited = hasUserPath(project);
   const materialCount = new Set(project.terrain.materialMap).size;
   const worldDocument = worldProjectToDocument(project);
   const integrityIssues = validateWorldDocument(worldDocument);
@@ -129,23 +129,23 @@ export function validateProject(project: WorldProject, context: ValidationContex
       artifacts,
     ),
     withChain(
-      foliagePainted ? "REAL" : "PARTIAL",
-      "foliage",
-      "foliage-painted",
-      foliagePainted ? "Foliage instances were painted by the user." : "Foliage is still only starter content.",
-      foliagePainted ? "info" : "warning",
-      chainFor(foliagePainted),
-      [`foliageInstances=${project.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0)}`],
+      placementPainted ? "REAL" : "PARTIAL",
+      "placement",
+      "placement-painted",
+      placementPainted ? "Placement instances were painted by the user." : "Placement is still only starter content.",
+      placementPainted ? "info" : "warning",
+      chainFor(placementPainted),
+      [`placementInstances=${project.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0)}`],
       artifacts,
     ),
     withChain(
-      roadEdited ? "REAL" : "PARTIAL",
-      "roads",
-      "road-visible",
-      roadEdited ? "Road data has been drawn or edited." : "Only the demo road is present.",
-      roadEdited ? "info" : "critical",
-      chainFor(roadEdited),
-      [`roads=${project.roads.length}`],
+      pathEdited ? "REAL" : "PARTIAL",
+      "paths",
+      "path-visible",
+      pathEdited ? "Path data has been drawn or edited." : "Only the demo path is present.",
+      pathEdited ? "info" : "critical",
+      chainFor(pathEdited),
+      [`paths=${project.roads.length}`],
       artifacts,
     ),
     withChain(
@@ -220,8 +220,8 @@ export function validateProject(project: WorldProject, context: ValidationContex
       `terrainEdited=${terrainEdited}`,
       `customAsset=${customAsset}`,
       `placedObject=${placedObject}`,
-      `foliagePainted=${foliagePainted}`,
-      `roadEdited=${roadEdited}`,
+      `placementPainted=${placementPainted}`,
+      `pathEdited=${pathEdited}`,
       `persisted=${persisted}`,
       `exportValid=${exportValid}`,
       `previewRendered=${previewRendered}`,

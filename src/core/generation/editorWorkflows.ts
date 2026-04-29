@@ -40,6 +40,9 @@ export function clearFoliageAroundRoads(project: WorldProject): WorldProject {
   };
 }
 
+export const clearPlacementAroundPaths = clearFoliageAroundRoads;
+export const clearPlacementAroundZones = clearPlacementAroundPaths;
+
 export function createProofPreviewHash(project: WorldProject) {
   const json = JSON.stringify(project);
   let hash = 0;
@@ -102,6 +105,9 @@ export function applyScatterZoneToProject(project: WorldProject, zoneId: string,
     ),
   };
 }
+
+export const applyZoneToProject = applyScatterZoneToProject;
+export const applyPlacementZoneToProject = applyScatterZoneToProject;
 
 export function buildAutoJsonProofProject(document: WorldDocument): WorldDocument {
   const ops = [

@@ -1,8 +1,9 @@
-import type { PlacedObject, RoadDefinition, TerrainData } from "../../types";
+import type { PlacedObject, TerrainData } from "../../types";
+import type { PathDefinition } from "../schema/CoreWorldSchema";
 import { isPointNearRoad } from "../../viewport/terrain";
 import * as THREE from "three";
 
-export function isObjectInsideRoad(object: PlacedObject, roads: RoadDefinition[]) {
+export function isObjectInsideRoad(object: PlacedObject, roads: PathDefinition[]) {
   return isPointNearRoad(new THREE.Vector3(object.position.x, object.position.y, object.position.z), roads);
 }
 
@@ -14,4 +15,3 @@ export function isObjectFloating(object: PlacedObject, terrain: TerrainData) {
   const ground = terrain.heights[idx] ?? 0;
   return object.position.y > ground + 2;
 }
-

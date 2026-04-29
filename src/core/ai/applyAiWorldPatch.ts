@@ -15,13 +15,24 @@ export function applyAiWorldPatch(project: WorldProject, patch: WorldPatch): { p
     case "setTerrainConfig":
       next.terrain = { ...next.terrain, ...patch.value };
       break;
+    case "addPath":
     case "addRoad":
       next.roads = [...next.roads, patch.value];
       break;
+    case "updatePath":
+      next.roads = next.roads.map((road) => (road.id === patch.targetId ? { ...road, ...patch.value } : road));
+      break;
+    case "removePath":
+      next.roads = next.roads.filter((road) => road.id !== patch.targetId);
+      break;
+    case "addPlacementZone":
     case "addBiome":
       next.materials = next.materials.some((material) => material.id === patch.value.materialId)
         ? next.materials
         : [...next.materials, { id: patch.value.materialId, name: patch.value.id, color: "#6ea95e", roughness: 1, scale: 1 }];
+      break;
+    case "addZone":
+      next.metadata = { ...next.metadata, description: `${next.metadata.description} [zone:${patch.value.id}]` };
       break;
     case "placeAsset":
       next.objects = [

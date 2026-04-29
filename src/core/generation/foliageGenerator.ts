@@ -1,4 +1,5 @@
 import type { FoliageGroup, TerrainData, WorldProject } from "../../types";
+import type { PathDefinition } from "../schema/CoreWorldSchema";
 import type { WorldGenerationConfig } from "../schema/WorldConfigSchema";
 import { isPointNearRoad, terrainSlopeAt, terrainWorldToGrid } from "../../viewport/terrain";
 import * as THREE from "three";
@@ -12,7 +13,7 @@ function mulberry32(seed: number) {
   };
 }
 
-export function generateFoliageGroups(project: WorldProject, config: WorldGenerationConfig, roads: { points: { x: number; y: number; z: number }[]; width: number }[], terrain: TerrainData): FoliageGroup[] {
+export function generateFoliageGroups(project: WorldProject, config: WorldGenerationConfig, roads: PathDefinition[], terrain: TerrainData): FoliageGroup[] {
   const rng = mulberry32(config.seed + 999);
   const result: FoliageGroup[] = [];
 

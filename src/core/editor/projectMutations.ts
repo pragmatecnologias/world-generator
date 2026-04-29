@@ -91,6 +91,9 @@ export function patchRoadById(project: WorldProject, roadId: string, patch: Part
   };
 }
 
+export const patchPathById = patchRoadById;
+export const updatePathById = patchRoadById;
+
 export function patchRoadPointById(
   project: WorldProject,
   roadId: string,
@@ -114,6 +117,9 @@ export function patchRoadPointById(
     terrain,
   };
 }
+
+export const patchPathPointById = patchRoadPointById;
+export const updatePathPointById = patchRoadPointById;
 
 export function generateScatterForZone(
   project: WorldProject,
@@ -174,6 +180,9 @@ export function generateScatterForZone(
     ),
   };
 }
+
+export const generateZoneForProject = generateScatterForZone;
+export const generatePlacementZoneForProject = generateScatterForZone;
 
 function hashSeed(seed: string) {
   let hash = 0;

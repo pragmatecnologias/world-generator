@@ -89,6 +89,8 @@ export type FoliageGroup = {
   settings: FoliageBrushSettings;
 };
 
+export type PlacementGroup = FoliageGroup;
+
 export type ScatterSettings = {
   count: number;
   minSpacing: number;
@@ -108,6 +110,8 @@ export type ScatterZone = {
   generatedObjectIds: string[];
 };
 
+export type ZoneDefinition = ScatterZone;
+
 export type RoadDefinition = {
   id: string;
   name: string;
@@ -119,6 +123,8 @@ export type RoadDefinition = {
   closedLoop: boolean;
   checkpointIds: string[];
 };
+
+export type PathDefinition = RoadDefinition;
 
 export type GameplayMarker = {
   id: string;
@@ -233,8 +239,11 @@ export type EditorTool =
   | "foliage-paint"
   | "foliage-erase"
   | "scatter"
+  | "zone-scatter"
   | "road-draw"
   | "road-edit"
+  | "path-draw"
+  | "path-edit"
   | "marker-place";
 
 export type BrushState = {
@@ -250,8 +259,10 @@ export type SelectionState = {
   selectedObjectIds: string[];
   selectedTerrainCell?: { x: number; z: number };
   selectedRoadId?: string;
+  selectedPathId?: string;
   selectedMarkerId?: string;
   selectedScatterZoneId?: string;
+  selectedZoneId?: string;
   selectedAssetId?: string;
 };
 
@@ -292,7 +303,7 @@ export type ProofStepResult = {
   id: string;
   label: string;
   status: ProofStepStatus;
-  subsystem: "terrain" | "assets" | "objects" | "foliage" | "scatter" | "roads" | "markers" | "save-load" | "export" | "preview" | "validation";
+  subsystem: "terrain" | "assets" | "objects" | "foliage" | "scatter" | "roads" | "markers" | "save-load" | "export" | "preview" | "validation" | "placement" | "path" | "zone";
   reason: string;
   screenshotId: string;
   preHash: string;
