@@ -1,6 +1,8 @@
 import { createDefaultProject } from "./defaultProject";
 import type { ValidationResult, WorldProject } from "./types";
-import { validateWorldDocumentIntegrity, worldProjectToDocument } from "./worldDocument";
+import { worldProjectToDocument } from "./worldDocument";
+import { validateWorldDocument } from "./core/schema/validators";
+import { isTerrainFlat } from "./core/rules/terrainRules";
 
 const baseline = createDefaultProject();
 
@@ -68,13 +70,14 @@ export function validateProject(project: WorldProject, context: ValidationContex
   const previewRendered = context.previewRendered ?? false;
   const artifacts = context.artifactRefs ?? [];
   const terrainEdited = hasUserEditedTerrain(project);
+  const terrainFlat = isTerrainFlat(project.terrain);
   const customAsset = hasCustomAsset(project);
   const placedObject = hasUserPlacedObject(project) || project.objects.some((object) => object.assetId !== "demo-rock");
   const foliagePainted = hasUserFoliage(project);
   const roadEdited = hasUserRoad(project);
   const materialCount = new Set(project.terrain.materialMap).size;
   const worldDocument = worldProjectToDocument(project);
-  const integrityIssues = validateWorldDocumentIntegrity(worldDocument);
+  const integrityIssues = validateWorldDocument(worldDocument);
 
   const chainFor = (interactive: boolean, visible = true) => ({
     visible,
@@ -86,13 +89,13 @@ export function validateProject(project: WorldProject, context: ValidationContex
 
   const results: ValidationResult[] = [
     withChain(
-      terrainEdited ? "REAL" : "PARTIAL",
+      terrainEdited && !terrainFlat ? "REAL" : "PARTIAL",
       "terrain",
       "terrain-editable",
-      terrainEdited ? "Terrain height and/or material data has been edited." : "Terrain exists but is still matching the starter world.",
-      terrainEdited ? "info" : "critical",
-      chainFor(terrainEdited),
-      [`edited=${terrainEdited}`, `heightCount=${project.terrain.heights.length}`],
+      terrainEdited && !terrainFlat ? "Terrain height and/or material data has been edited." : terrainFlat ? "Terrain still looks flat or nearly flat." : "Terrain exists but is still matching the starter world.",
+      terrainEdited && !terrainFlat ? "info" : "critical",
+      chainFor(terrainEdited && !terrainFlat),
+      [`edited=${terrainEdited}`, `flat=${terrainFlat}`, `heightCount=${project.terrain.heights.length}`],
       artifacts,
     ),
     withChain(

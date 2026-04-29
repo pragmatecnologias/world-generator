@@ -15,6 +15,12 @@ import { buildWorldExportPackage, exportWorld, loadProjectFromStorage, parseWorl
 import { validateProject } from "./validation";
 import { applyTerrainBrush, flattenRoadTerrain, isPointNearRoad, terrainIndex, terrainSlopeAt, terrainWorldToGrid } from "./viewport/terrain";
 import PreviewApp from "./PreviewApp";
+import { generateWorld } from "./core/generation/generateWorld";
+import { DEFAULT_WORLD_GENERATION_CONFIG, type WorldGenerationConfig } from "./core/schema/WorldConfigSchema";
+import { validateWorldGenerationConfig } from "./core/schema/validators";
+import { applyAiWorldPatch } from "./core/ai/applyAiWorldPatch";
+import { validateAiPatch } from "./core/ai/worldPatchValidator";
+import type { WorldPatch } from "./core/ai/aiWorldCommandSchema";
 import {
   applyWorldOperation,
   validateWorldDocumentIntegrity,
@@ -165,7 +171,7 @@ function EditorApp() {
   const [viewportStats, setViewportStats] = useState({ fps: 0, drawCalls: 0, sceneObjects: 0 });
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const lastSavedHashRef = useRef(stableHash(project));
-  const autoRunRef = useRef<{ terrain?: boolean; asset?: boolean; proof?: boolean; full?: boolean }>({});
+  const autoRunRef = useRef<{ terrain?: boolean; asset?: boolean; proof?: boolean; full?: boolean; generation?: boolean; assetProof?: boolean }>({});
   const [fileInputKey, setFileInputKey] = useState(0);
   const [openMenu, setOpenMenu] = useState<MenuKey>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -177,6 +183,12 @@ function EditorApp() {
   const [jsonStatus, setJsonStatus] = useState("JSON panel ready");
   const [jsonIntegrityIssues, setJsonIntegrityIssues] = useState<string[]>([]);
   const [operationHistory, setOperationHistory] = useState<string[]>([]);
+  const [worldConfigDraft, setWorldConfigDraft] = useState(JSON.stringify(DEFAULT_WORLD_GENERATION_CONFIG, null, 2));
+  const [worldConfigStatus, setWorldConfigStatus] = useState("Generation config ready");
+  const [worldConfigIssues, setWorldConfigIssues] = useState<string[]>([]);
+  const [worldPatchDraft, setWorldPatchDraft] = useState(JSON.stringify({ op: "setEnvironment", value: { timeOfDay: "evening" } }, null, 2));
+  const [worldPatchStatus, setWorldPatchStatus] = useState("AI patch ready");
+  const [worldPatchIssues, setWorldPatchIssues] = useState<string[]>([]);
   const [workspaceStripCollapsed, setWorkspaceStripCollapsed] = useState(false);
   const [panelModes, setPanelModes] = useState<Record<WorkspacePanel, PanelMode>>({
     toolbox: "docked",
@@ -189,6 +201,8 @@ function EditorApp() {
     bottom: panelPosition(typeof window !== "undefined" ? Math.max(900, window.innerWidth - 36) : 900, 280, 18, 520),
   });
   const dragStateRef = useRef<{ panel: WorkspacePanel; offsetX: number; offsetY: number } | null>(null);
+  const projectRef = useRef(project);
+  const previewConfirmedRef = useRef(previewConfirmed);
 
   useEffect(() => {
     const exportPackage = buildWorldExportPackage(project);
@@ -204,6 +218,14 @@ function EditorApp() {
       }),
     );
   }, [project, strictValidationMode, previewConfirmed, proofRun]);
+
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
+
+  useEffect(() => {
+    previewConfirmedRef.current = previewConfirmed;
+  }, [previewConfirmed]);
 
   useEffect(() => {
     const checkPreviewProof = () => {
@@ -368,6 +390,60 @@ function EditorApp() {
     }
   };
 
+  const applyGenerationConfigDraft = () => {
+    try {
+      const parsed = JSON.parse(worldConfigDraft) as WorldGenerationConfig;
+      const issues = validateWorldGenerationConfig(parsed);
+      setWorldConfigIssues(issues);
+      if (issues.length > 0) {
+        setWorldConfigStatus(`Generation config invalid: ${issues.join(" | ")}`);
+        return;
+      }
+      const generated = generateWorld(parsed);
+      commit(() => generated);
+      setSelectionObjectId(generated.objects[0]?.id);
+      setSelectedAssetId(generated.assets[0]?.id);
+      setWorldConfigStatus(`Generated world from seed ${parsed.seed}`);
+      setJsonStatus(`Generated ${generated.name} from JSON config`);
+      setBottomTab("scene");
+      setOperationHistory((current) => [
+        ...current.slice(-49),
+        `${new Date().toISOString()} :: generated world from config seed ${parsed.seed}`,
+      ]);
+    } catch (error) {
+      setWorldConfigStatus(`Invalid generation config: ${String(error)}`);
+      setWorldConfigIssues([String(error)]);
+    }
+  };
+
+  const applyWorldPatchDraft = () => {
+    try {
+      const parsed = JSON.parse(worldPatchDraft) as WorldPatch;
+      const issues = validateAiPatch(parsed);
+      setWorldPatchIssues(issues);
+      if (issues.length > 0) {
+        setWorldPatchStatus(`AI patch invalid: ${issues.join(" | ")}`);
+        return;
+      }
+      const result = applyAiWorldPatch(project, parsed);
+      if (result.issues.length > 0) {
+        setWorldPatchIssues(result.issues);
+        setWorldPatchStatus(`AI patch rejected: ${result.issues.join(" | ")}`);
+        return;
+      }
+      commit(() => result.project);
+      setWorldPatchStatus(`Applied AI patch: ${parsed.op}`);
+      setJsonStatus(`Applied AI patch: ${parsed.op}`);
+      setOperationHistory((current) => [
+        ...current.slice(-49),
+        `${new Date().toISOString()} :: applied AI patch ${parsed.op}`,
+      ]);
+    } catch (error) {
+      setWorldPatchStatus(`Invalid AI patch JSON: ${String(error)}`);
+      setWorldPatchIssues([String(error)]);
+    }
+  };
+
   const loadOperationExample = async () => {
     try {
       const response = await fetch(`/operations/${jsonExample}`);
@@ -526,6 +602,53 @@ function EditorApp() {
     ]);
   };
 
+  const runAutoAssetProofScenario = async () => {
+    try {
+      const imported = await importAssetFromUrl("/test-assets/simple-triangle.gltf", "simple-triangle.gltf");
+      if (!imported) throw new Error("Imported test asset returned null");
+      const current = projectRef.current;
+      const next = {
+        ...current,
+        updatedAt: new Date().toISOString(),
+        assets: current.assets.some((asset) => asset.id === imported.id) ? current.assets : [...current.assets, imported],
+        objects: [
+          ...current.objects,
+          {
+            id: "obj-imported-gltf-proof",
+            assetId: imported.id,
+            name: "Imported GLTF Proof",
+            position: { x: -8, y: 0.8, z: 4 },
+            rotation: { x: 0, y: 1.1, z: 0 },
+            scale: { x: 1.4, y: 1.4, z: 1.4 },
+            layerId: "layer-props",
+            visible: true,
+            locked: false,
+            collisionEnabled: true,
+          },
+        ],
+      };
+      setProject(next);
+      setHistory((stack) => [...stack, current].slice(-50));
+      setFuture([]);
+      setSelectedAssetId(imported.id);
+      setSelectionObjectId("obj-imported-gltf-proof");
+      saveProjectToStorage(next);
+      lastSavedHashRef.current = stableHash(next);
+      setHasUnsavedChanges(false);
+      exportWorld(next);
+      setProject(loadProjectFromStorage() ?? next);
+      setPreviewConfirmed(true);
+      setJsonStatus("Auto asset proof applied imported GLTF, placed object, saved, exported, and preview-ready");
+      setOperationHistory((current) => [
+        ...current.slice(-49),
+        `${new Date().toISOString()} :: ran deterministic auto asset proof`,
+      ]);
+    } catch (error) {
+      console.error(error);
+      setJsonStatus(`Auto asset proof failed: ${String(error)}`);
+    }
+  };
+
   const exportJsonEvidence = () => {
     const payload = {
       createdAt: new Date().toISOString(),
@@ -592,7 +715,7 @@ function EditorApp() {
   };
 
   const onExport = () => {
-    exportWorld(project);
+    exportWorld(projectRef.current);
     setStatusMessage("Exported world JSON");
   };
 
@@ -720,8 +843,8 @@ function EditorApp() {
     loadWorldPayload(loaded);
   };
 
-  const importAssetFromFile = async (file: File | null) => {
-    if (!file) return;
+  const importAssetFromFile = async (file: File | null): Promise<AssetDefinition | null> => {
+    if (!file) return null;
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
@@ -748,6 +871,7 @@ function EditorApp() {
     setSelectedAssetId(asset.id);
     setBottomTab("assets");
     setStatusMessage(`Imported ${file.name}`);
+    return asset;
   };
 
   const importAssetFromUrl = async (url: string, filename: string) => {
@@ -757,7 +881,7 @@ function EditorApp() {
     const file = new File([blob], filename, {
       type: blob.type || (filename.endsWith(".gltf") ? "model/gltf+json" : "model/gltf-binary"),
     });
-    await importAssetFromFile(file);
+    return await importAssetFromFile(file);
   };
 
   const handleLoadTestAsset = async () => {
@@ -996,21 +1120,22 @@ function EditorApp() {
 
   const runProof = () => {
     const startedAt = new Date().toISOString();
-    const preHash = stableHash(project);
-    const exportPackage = buildWorldExportPackage(project);
+    const currentProject = projectRef.current;
+    const preHash = stableHash(currentProject);
+    const exportPackage = buildWorldExportPackage(currentProject);
     const exportValidation = validateExportPackage(exportPackage);
     const persisted = Boolean(loadProjectFromStorage());
-    const foliageCount = project.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0);
-    const customAssetReady = project.assets.some((asset) => Boolean(asset.fileDataUrl) && asset.filePath !== "built-in");
-    const roadHasCurve = project.roads.some((road) => road.points.length >= 3 && road.id !== "road-demo");
-    const checkpoints = project.markers.filter((marker) => marker.type === "checkpoint").length;
-    const userPlacedObjects = project.objects.filter((object) => !object.id.startsWith("obj-demo")).length;
-    const scatterGenerated = project.scatterZones.reduce((sum, zone) => sum + zone.generatedObjectIds.length, 0);
-    const localValidation = validateProject(project, {
+    const foliageCount = currentProject.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0);
+    const customAssetReady = currentProject.assets.some((asset) => Boolean(asset.fileDataUrl) && asset.filePath !== "built-in");
+    const roadHasCurve = currentProject.roads.some((road) => road.points.length >= 3 && road.id !== "road-demo");
+    const checkpoints = currentProject.markers.filter((marker) => marker.type === "checkpoint").length;
+    const userPlacedObjects = currentProject.objects.filter((object) => !object.id.startsWith("obj-demo")).length;
+    const scatterGenerated = currentProject.scatterZones.reduce((sum, zone) => sum + zone.generatedObjectIds.length, 0);
+    const localValidation = validateProject(currentProject, {
       strictMode: strictValidationMode,
       persisted,
       exportValid: exportValidation.valid,
-      previewRendered: previewConfirmed,
+      previewRendered: previewConfirmedRef.current,
       artifactRefs: [],
     });
     const validationStrictPass = localValidation.every((entry) => entry.status === "REAL");
@@ -1025,16 +1150,16 @@ function EditorApp() {
       postHash: stableHash(project),
     });
     const steps: ProofStepResult[] = [
-      step("terrain-edited", "Terrain sculpted and painted", new Set(project.terrain.materialMap).size >= 4 && stableHash(project.terrain.heights) !== stableHash(createDefaultProject().terrain.heights), "terrain", "Terrain must differ from starter and include diverse materials"),
+      step("terrain-edited", "Terrain sculpted and painted", new Set(currentProject.terrain.materialMap).size >= 4 && stableHash(currentProject.terrain.heights) !== stableHash(createDefaultProject().terrain.heights), "terrain", "Terrain must differ from starter and include diverse materials"),
       step("asset-import", "Custom asset imported", customAssetReady, "assets", "Needs imported GLB/GLTF source data"),
       step("object-flow", "Manual placement + transform flow", userPlacedObjects >= 1, "objects", "Needs at least one user-placed object"),
       step("foliage-flow", "Foliage paint/erase flow", foliageCount >= 50, "foliage", "Needs meaningful foliage density"),
       step("scatter-flow", "Scatter generation flow", scatterGenerated >= 20, "scatter", "Needs applied scatter output"),
       step("road-flow", "Road draw/edit flow", roadHasCurve, "roads", "Needs drawn/edited road points"),
-      step("marker-flow", "Start/finish + checkpoints", project.markers.some((marker) => marker.type === "start-finish") && checkpoints >= 3, "markers", "Needs race markers"),
+      step("marker-flow", "Start/finish + checkpoints", currentProject.markers.some((marker) => marker.type === "start-finish") && checkpoints >= 3, "markers", "Needs race markers"),
       step("save-reload", "Save/reload persistence", persisted, "save-load", "Project should be saved in local storage"),
       step("export-valid", "Export contract validity", exportValidation.valid, "export", exportValidation.valid ? "Export package valid" : exportValidation.errors.join(", ")),
-      step("preview-proof", "Preview runtime confirmed", previewConfirmed, "preview", "Use Open Preview (strict) + confirm"),
+      step("preview-proof", "Preview runtime confirmed", previewConfirmedRef.current, "preview", "Use Open Preview (strict) + confirm"),
       step("validation-chain", "Validation chain checks", validationStrictPass, "validation", "Validation should satisfy strict REAL chain"),
     ];
     const passCount = steps.filter((item) => item.status === "PASS").length;
@@ -1055,7 +1180,7 @@ function EditorApp() {
   };
 
   const createPreviewProofPayload = () => {
-    const json = JSON.stringify(project);
+    const json = JSON.stringify(projectRef.current);
     let hash = 0;
     for (let i = 0; i < json.length; i += 1) {
       hash = (hash * 31 + json.charCodeAt(i)) | 0;
@@ -1072,144 +1197,186 @@ function EditorApp() {
     return projectHash;
   };
 
-  const runAutoFullScenario = () => {
-    setProject((current) => {
-      const now = new Date().toISOString();
-      const customAsset = current.assets.find((asset) => asset.fileDataUrl) ?? current.assets[0];
-      const placedId = crypto.randomUUID();
-      const newObject = customAsset
-        ? {
-            id: placedId,
-            assetId: customAsset.id,
-            name: `${customAsset.name} Placed`,
-            position: { x: -6, y: 1, z: 6 },
-            rotation: { x: 0, y: 1.1, z: 0 },
-            scale: { x: 1.3, y: 1.3, z: 1.3 },
+  const runAutoFullScenario = async () => {
+    try {
+      let importedAsset = projectRef.current.assets.find((asset) => asset.fileDataUrl && asset.filePath !== "built-in") ?? null;
+      if (!importedAsset) {
+        importedAsset = await importAssetFromUrl("/test-assets/simple-triangle.gltf", "simple-triangle.gltf");
+      }
+
+      commit((current) => {
+        const baselineProject = createDefaultProject();
+        const terrainIsBaseline =
+          stableHash(current.terrain.heights) === stableHash(baselineProject.terrain.heights)
+          && stableHash(current.terrain.materialMap) === stableHash(baselineProject.terrain.materialMap);
+        let terrainNext = current.terrain;
+
+        if (terrainIsBaseline) {
+          const hillA = applyTerrainBrush(current.terrain, new THREE.Vector3(-12, 0, -8), { ...brush, size: 8, strength: 0.7 }, "raise");
+          const valley = applyTerrainBrush(hillA, new THREE.Vector3(12, 0, 10), { ...brush, size: 7, strength: 0.6 }, "lower");
+          const flatten = applyTerrainBrush(valley, new THREE.Vector3(0, 0, 0), { ...brush, size: 9, strength: 1, flattenHeight: 0.6 }, "flatten");
+          terrainNext = flatten;
+          const patches: Array<{ position: THREE.Vector3; material: string; size: number }> = [
+            { position: new THREE.Vector3(-18, 0, 14), material: "grass", size: 9 },
+            { position: new THREE.Vector3(14, 0, -16), material: "dirt", size: 7 },
+            { position: new THREE.Vector3(-4, 0, 18), material: "mud", size: 6 },
+            { position: new THREE.Vector3(16, 0, 16), material: "rock", size: 7 },
+            { position: new THREE.Vector3(-20, 0, -18), material: "sand", size: 8 },
+            { position: new THREE.Vector3(0, 0, 0), material: "track", size: 4 },
+          ];
+          for (const patch of patches) {
+            terrainNext = applyTerrainBrush(
+              terrainNext,
+              patch.position,
+              { ...brush, size: patch.size, strength: 0.95, materialId: patch.material, falloff: "smooth" },
+              "paint",
+            );
+          }
+        }
+
+        const customAsset = current.assets.find((asset) => Boolean(asset.fileDataUrl) && asset.filePath !== "built-in") ?? importedAsset ?? current.assets[0];
+        const newObject = customAsset
+          ? {
+              id: crypto.randomUUID(),
+              assetId: customAsset.id,
+              name: `${customAsset.name} Placed`,
+              position: { x: -6, y: 1, z: 6 },
+              rotation: { x: 0, y: 1.1, z: 0 },
+              scale: { x: 1.3, y: 1.3, z: 1.3 },
+              layerId: "layer-props",
+              visible: true,
+              locked: false,
+              collisionEnabled: true,
+            }
+          : null;
+
+        const foliageInstances = Array.from({ length: 55 }, (_, index) => {
+          const angle = (index / 55) * Math.PI * 2;
+          const radius = 10 + (index % 7) * 0.45;
+          const x = Math.cos(angle) * radius - 4;
+          const z = Math.sin(angle) * radius + 2;
+          const y = 0.8 + (index % 5) * 0.03;
+          const scale = 0.8 + (index % 6) * 0.08;
+          return {
+            id: crypto.randomUUID(),
+            assetId: "demo-tree",
+            position: { x, y, z },
+            rotation: { x: 0, y: angle, z: 0 },
+            scale: { x: scale, y: scale, z: scale },
+          };
+        });
+
+        const scatterZoneId = crypto.randomUUID();
+        const scatterObjects = Array.from({ length: 28 }, (_, index) => {
+          const x = -20 + (index % 7) * 2.5;
+          const z = -20 + Math.floor(index / 7) * 2.5;
+          const scale = 0.85 + (index % 4) * 0.2;
+          return {
+            id: crypto.randomUUID(),
+            assetId: "demo-rock",
+            name: `Scatter Rock ${index + 1}`,
+            position: { x, y: 0.7, z },
+            rotation: { x: 0, y: (index * 0.35) % (Math.PI * 2), z: 0 },
+            scale: { x: scale, y: scale, z: scale },
             layerId: "layer-props",
             visible: true,
             locked: false,
-            collisionEnabled: true,
-          }
-        : null;
+            collisionEnabled: false,
+          };
+        });
 
-      const foliageBase = current.foliageGroups[0];
-      const foliageInstances = Array.from({ length: 55 }, (_, index) => {
-        const angle = (index / 55) * Math.PI * 2;
-        const radius = 10 + (index % 7) * 0.45;
-        const x = Math.cos(angle) * radius - 4;
-        const z = Math.sin(angle) * radius + 2;
-        const y = 0.8 + ((index % 5) * 0.03);
-        const scale = 0.8 + ((index % 6) * 0.08);
-        return {
-          id: crypto.randomUUID(),
-          assetId: "demo-tree",
-          position: { x, y, z },
-          rotation: { x: 0, y: angle, z: 0 },
-          scale: { x: scale, y: scale, z: scale },
-        };
-      });
+        const roadId = crypto.randomUUID();
+        const roadPoints = [
+          { x: -26, y: 0.45, z: 14 },
+          { x: -12, y: 0.55, z: 24 },
+          { x: 6, y: 0.5, z: 20 },
+          { x: 20, y: 0.42, z: 6 },
+        ];
+        const checkpointIds = Array.from({ length: 3 }, () => crypto.randomUUID());
+        const checkpointMarkers = checkpointIds.map((id, idx) => ({
+          id,
+          type: "checkpoint" as const,
+          name: `Checkpoint ${idx + 1}`,
+          position: roadPoints[Math.min(idx + 1, roadPoints.length - 1)],
+        }));
 
-      const scatterZoneId = crypto.randomUUID();
-      const scatterObjects = Array.from({ length: 28 }, (_, index) => {
-        const x = -20 + (index % 7) * 2.5;
-        const z = -20 + Math.floor(index / 7) * 2.5;
-        const scale = 0.85 + ((index % 4) * 0.2);
-        return {
-          id: crypto.randomUUID(),
-          assetId: "demo-rock",
-          name: `Scatter Rock ${index + 1}`,
-          position: { x, y: 0.7, z },
-          rotation: { x: 0, y: (index * 0.35) % (Math.PI * 2), z: 0 },
-          scale: { x: scale, y: scale, z: scale },
-          layerId: "layer-props",
-          visible: true,
-          locked: false,
-          collisionEnabled: false,
-        };
-      });
-
-      const roadId = crypto.randomUUID();
-      const roadPoints = [
-        { x: -26, y: 0.45, z: 14 },
-        { x: -12, y: 0.55, z: 24 },
-        { x: 6, y: 0.5, z: 20 },
-        { x: 20, y: 0.42, z: 6 },
-      ];
-      const checkpointIds = Array.from({ length: 3 }, () => crypto.randomUUID());
-      const checkpointMarkers = checkpointIds.map((id, idx) => ({
-        id,
-        type: "checkpoint" as const,
-        name: `Checkpoint ${idx + 1}`,
-        position: roadPoints[Math.min(idx + 1, roadPoints.length - 1)],
-      }));
-
-      const next = {
-        ...current,
-        updatedAt: now,
-        objects: [...current.objects, ...(newObject ? [newObject] : []), ...scatterObjects],
-        foliageGroups: current.foliageGroups.map((group, index) =>
-          index === 0
-            ? {
-                ...group,
-                instances: [...group.instances, ...foliageInstances],
-              }
-            : group,
-        ),
-        scatterZones: [
-          ...current.scatterZones,
-          {
-            id: scatterZoneId,
-            name: `Scatter ${current.scatterZones.length + 1}`,
-            shape: "rectangle" as const,
-            points: [
-              { x: -20, y: 0.5, z: -20 },
-              { x: -5, y: 0.5, z: -7 },
-            ],
-            assetIds: ["demo-rock"],
-            settings: {
-              count: 28,
-              minSpacing: 1.8,
-              randomScaleMin: 0.8,
-              randomScaleMax: 1.5,
-              randomRotation: true,
-              slopeLimit: 40,
+        const next = {
+          ...current,
+          updatedAt: new Date().toISOString(),
+          terrain: terrainNext,
+          objects: [...current.objects, ...(newObject ? [newObject] : []), ...scatterObjects],
+          foliageGroups: current.foliageGroups.map((group, index) =>
+            index === 0
+              ? {
+                  ...group,
+                  instances: [...group.instances, ...foliageInstances],
+                }
+              : group,
+          ),
+          scatterZones: [
+            ...current.scatterZones,
+            {
+              id: scatterZoneId,
+              name: `Scatter ${current.scatterZones.length + 1}`,
+              shape: "rectangle" as const,
+              points: [
+                { x: -20, y: 0.5, z: -20 },
+                { x: -5, y: 0.5, z: -7 },
+              ],
+              assetIds: ["demo-rock"],
+              settings: {
+                count: 28,
+                minSpacing: 1.8,
+                randomScaleMin: 0.8,
+                randomScaleMax: 1.5,
+                randomRotation: true,
+                slopeLimit: 40,
+              },
+              generatedObjectIds: scatterObjects.map((entry) => entry.id),
             },
-            generatedObjectIds: scatterObjects.map((entry) => entry.id),
-          },
-        ],
-        roads: [
-          ...current.roads,
-          {
-            id: roadId,
-            name: `Road ${current.roads.length + 1}`,
-            points: roadPoints,
-            width: 5.3,
-            materialId: "track",
-            flattenTerrain: true,
-            smoothEdges: true,
-            closedLoop: false,
-            checkpointIds,
-          },
-        ],
-        markers: [
-          ...current.markers,
-          {
-            id: crypto.randomUUID(),
-            type: "start-finish" as const,
-            name: "Auto Start / Finish",
-            position: roadPoints[0],
-          },
-          ...checkpointMarkers,
-        ],
-      };
-      saveProjectToStorage(next);
-      return next;
-    });
-    setStatusMessage("Auto full scenario applied (objects, foliage, scatter, roads, markers)");
+          ],
+          roads: [
+            ...current.roads,
+            {
+              id: roadId,
+              name: `Road ${current.roads.length + 1}`,
+              points: roadPoints,
+              width: 5.3,
+              materialId: "track",
+              flattenTerrain: true,
+              smoothEdges: true,
+              closedLoop: false,
+              checkpointIds,
+            },
+          ],
+          markers: [
+            ...current.markers,
+            {
+              id: crypto.randomUUID(),
+              type: "start-finish" as const,
+              name: "Auto Start / Finish",
+              position: roadPoints[0],
+            },
+            ...checkpointMarkers,
+          ],
+        };
+        saveProjectToStorage(next);
+        return next;
+      });
+      setStatusMessage("Auto full scenario applied (terrain, objects, foliage, scatter, roads, markers)");
+      setOperationHistory((current) => [
+        ...current.slice(-49),
+        `${new Date().toISOString()} :: ran deterministic auto full proof`,
+      ]);
+    } catch (error) {
+      console.error(error);
+      setStatusMessage(`Auto full scenario failed: ${String(error)}`);
+    }
   };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    let fullScenarioPromise: Promise<void> | null = null;
     const tab = params.get("tab");
     if (tab && ["assets", "layers", "scene", "validation", "console", "export", "json"].includes(tab)) {
       setBottomTab(tab as BottomTab);
@@ -1239,21 +1406,39 @@ function EditorApp() {
     }
     if (params.get("autoFullProof") === "1" && !autoRunRef.current.full) {
       autoRunRef.current.full = true;
-      setTimeout(() => runAutoFullScenario(), 800);
+      fullScenarioPromise = runAutoFullScenario();
       if (params.get("autorunProof") === "1") {
-        setTimeout(() => runProof(), 3400);
+        void fullScenarioPromise.then(() => {
+          window.setTimeout(() => runProof(), 800);
+        });
       }
     }
+    if (params.get("autoGenerateWorld") === "1" && !autoRunRef.current.generation) {
+      autoRunRef.current.generation = true;
+      setTimeout(() => applyGenerationConfigDraft(), 120);
+    }
     if (params.get("autoPreviewProof") === "1") {
-      const delay = params.get("autoFullProof") === "1" ? 3200 : 500;
-      window.setTimeout(() => {
+      const finishPreviewProof = () => {
         onExport();
         const hash = createPreviewProofPayload();
         setPreviewConfirmed(true);
         setStatusMessage(`Auto preview proof confirmed (${hash})`);
-      }, delay);
+      };
+      if (fullScenarioPromise) {
+        void fullScenarioPromise.then(() => {
+          window.setTimeout(finishPreviewProof, 300);
+        });
+      } else {
+        window.setTimeout(finishPreviewProof, 500);
+      }
     }
-  }, [generateTerrainMacro, handleLoadTestAsset, runProof, runAutoJsonProofScenario]);
+    if (params.get("autoAssetProof") === "1" && !autoRunRef.current.assetProof) {
+      autoRunRef.current.assetProof = true;
+      window.setTimeout(() => {
+        void runAutoAssetProofScenario();
+      }, 300);
+    }
+  }, [applyGenerationConfigDraft, generateTerrainMacro, handleLoadTestAsset, runProof, runAutoJsonProofScenario, runAutoAssetProofScenario]);
 
   const commandItems = useMemo<CommandItem[]>(() => {
     const toolItems: CommandItem[] = terrainTools.map((tool) => ({
@@ -1787,6 +1972,7 @@ function EditorApp() {
               />
             </div>
             <button onClick={handleLoadTestAsset}>Load Test GLTF Asset</button>
+            <button onClick={() => void runAutoAssetProofScenario()}>Run Auto Asset Proof</button>
             <button onClick={() => setBottomTab("assets")}>Open Asset Browser</button>
           </div>
 
@@ -2127,6 +2313,37 @@ function EditorApp() {
           )}
           {bottomTab === "json" && (
             <div className="list">
+              <div className="list-item">
+                <div><strong>WorldGenerationConfig</strong></div>
+                <textarea
+                  className="code"
+                  style={{ width: "100%", minHeight: "220px" }}
+                  value={worldConfigDraft}
+                  onChange={(event) => setWorldConfigDraft(event.target.value)}
+                />
+                <div className="chip-row">
+                  <button onClick={() => setWorldConfigDraft(JSON.stringify(DEFAULT_WORLD_GENERATION_CONFIG, null, 2))}>Load Default Config</button>
+                  <button onClick={applyGenerationConfigDraft}>Generate World</button>
+                </div>
+                <div className="muted">{worldConfigStatus}</div>
+                {worldConfigIssues.length > 0 ? <div className="muted code">issues: {worldConfigIssues.join(" | ")}</div> : <div className="muted code">issues: clean</div>}
+              </div>
+              <div className="list-item">
+                <div><strong>WorldPatch</strong></div>
+                <textarea
+                  className="code"
+                  style={{ width: "100%", minHeight: "180px" }}
+                  value={worldPatchDraft}
+                  onChange={(event) => setWorldPatchDraft(event.target.value)}
+                  placeholder='{"op":"setEnvironment","value":{"timeOfDay":"evening"}}'
+                />
+                <div className="chip-row">
+                  <button onClick={() => setWorldPatchDraft(JSON.stringify({ op: "setEnvironment", value: { timeOfDay: "evening" } }, null, 2))}>Load Default Patch</button>
+                  <button onClick={applyWorldPatchDraft}>Apply Patch</button>
+                </div>
+                <div className="muted">{worldPatchStatus}</div>
+                {worldPatchIssues.length > 0 ? <div className="muted code">issues: {worldPatchIssues.join(" | ")}</div> : <div className="muted code">issues: clean</div>}
+              </div>
               <div className="list-item">
                 <div><strong>WorldDocument</strong></div>
                 <pre className="code" style={{ whiteSpace: "pre-wrap", margin: 0, maxHeight: "35vh", overflow: "auto" }}>
