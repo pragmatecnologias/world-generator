@@ -1,0 +1,11 @@
+{
+  "type": "applyTerrainHeightPatch",
+  "payload": {
+    "mode": "flatten",
+    "center": { "x": 0, "z": 8 },
+    "radius": 12,
+    "strength": 1,
+    "falloff": "smooth",
+    "flattenHeight": 0.4
+  }
+}

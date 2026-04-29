@@ -1,0 +1,28 @@
+{
+  "operations": [
+    {
+      "type": "addMarker",
+      "payload": {
+        "id": "checkpoint-001",
+        "type": "checkpoint",
+        "name": "Checkpoint 1",
+        "position": { "x": -8, "y": 0.4, "z": 18 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "radius": 8,
+        "metadata": { "order": 1 }
+      }
+    },
+    {
+      "type": "addMarker",
+      "payload": {
+        "id": "checkpoint-002",
+        "type": "checkpoint",
+        "name": "Checkpoint 2",
+        "position": { "x": 6, "y": 0.4, "z": 16 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "radius": 8,
+        "metadata": { "order": 2 }
+      }
+    }
+  ]
+}

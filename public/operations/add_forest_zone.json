@@ -1,0 +1,34 @@
+{
+  "type": "addFoliageGroup",
+  "payload": {
+    "id": "foliage-ai-forest-001",
+    "name": "AI Forest Zone",
+    "assetIds": ["demo-tree"],
+    "instances": [
+      {
+        "id": "foliage-ai-001",
+        "assetId": "demo-tree",
+        "position": { "x": 18, "y": 0.5, "z": -14 },
+        "rotation": { "x": 0, "y": 1.1, "z": 0 },
+        "scale": { "x": 1.15, "y": 1.15, "z": 1.15 }
+      },
+      {
+        "id": "foliage-ai-002",
+        "assetId": "demo-tree",
+        "position": { "x": 21, "y": 0.55, "z": -16 },
+        "rotation": { "x": 0, "y": 2.4, "z": 0 },
+        "scale": { "x": 0.95, "y": 0.95, "z": 0.95 }
+      }
+    ],
+    "settings": {
+      "density": 8,
+      "minSpacing": 2.8,
+      "randomScaleMin": 0.8,
+      "randomScaleMax": 1.3,
+      "randomRotation": true,
+      "slopeLimit": 35,
+      "avoidRoads": true,
+      "eraseMode": false
+    }
+  }
+}

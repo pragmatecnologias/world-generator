@@ -1,0 +1,10 @@
+{
+  "type": "updateEnvironment",
+  "payload": {
+    "timeOfDay": "evening",
+    "backgroundColor": "#f29a5f",
+    "fogColor": "#e3b48a",
+    "sunIntensity": 1.4,
+    "ambientIntensity": 0.55
+  }
+}

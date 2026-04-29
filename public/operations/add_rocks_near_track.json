@@ -1,0 +1,34 @@
+{
+  "operations": [
+    {
+      "type": "addObject",
+      "payload": {
+        "id": "obj-rock-ai-001",
+        "assetId": "demo-rock",
+        "name": "AI Rock 1",
+        "position": { "x": -4, "y": 0.6, "z": 10 },
+        "rotation": { "x": 0, "y": 1.2, "z": 0 },
+        "scale": { "x": 1.2, "y": 1.2, "z": 1.2 },
+        "layerId": "layer-props",
+        "visible": true,
+        "locked": false,
+        "collisionEnabled": true
+      }
+    },
+    {
+      "type": "addObject",
+      "payload": {
+        "id": "obj-rock-ai-002",
+        "assetId": "demo-rock",
+        "name": "AI Rock 2",
+        "position": { "x": 4, "y": 0.7, "z": 12 },
+        "rotation": { "x": 0, "y": 0.5, "z": 0 },
+        "scale": { "x": 0.9, "y": 0.9, "z": 0.9 },
+        "layerId": "layer-props",
+        "visible": true,
+        "locked": false,
+        "collisionEnabled": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "type": "applyTerrainMaterialPatch",
+  "payload": {
+    "materialId": "mud",
+    "center": { "x": 6, "z": 14 },
+    "radius": 8,
+    "strength": 0.9,
+    "falloff": "smooth"
+  }
+}

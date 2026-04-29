@@ -1,0 +1,13 @@
+{
+  "operations": [
+    {
+      "type": "updateRoad",
+      "targetId": "road-demo",
+      "payload": {
+        "width": 10,
+        "flattenTerrain": true,
+        "smoothEdges": true
+      }
+    }
+  ]
+}
