@@ -1,5 +1,6 @@
 import type { WorldExportPackage, WorldProject } from "./types";
-import { worldDocumentToProject, worldProjectToDocument, type WorldDocument } from "./worldDocument";
+import { worldDocumentToProject, worldProjectToDocument, type WorldDocument } from "./core/worldDocument";
+import { buildAssetRegistry } from "./core/assets/assetRegistry";
 
 export const WORLD_EXPORT_SCHEMA_VERSION = "1.0.0";
 
@@ -71,6 +72,7 @@ function downloadJson(name: string, payload: unknown) {
 
 export function buildWorldExportPackage(project: WorldProject): WorldExportPackage {
   const worldDocument = worldProjectToDocument(project);
+  const assetRegistry = buildAssetRegistry(project.assets);
   return {
     packageType: "world-export",
     schemaVersion: WORLD_EXPORT_SCHEMA_VERSION,
@@ -83,11 +85,14 @@ export function buildWorldExportPackage(project: WorldProject): WorldExportPacka
       name: asset.name,
       category: asset.category,
       filePath: asset.filePath,
+      sourceType: asset.sourceType ?? (asset.filePath === "built-in" ? "builtin" : asset.filePath.endsWith(".gltf") ? "gltf" : "glb"),
       defaultScale: asset.defaultScale,
       collisionType: asset.collisionType,
       canPaint: asset.canPaint,
       tags: asset.tags,
       hasSourceData: Boolean(asset.fileDataUrl),
+      bounds: asset.bounds ?? { width: 1, height: 1, depth: 1 },
+      placementRules: asset.placementRules ?? assetRegistry.byId[asset.id]?.placementRules,
     })),
     summary: {
       terrainHeights: project.terrain.heights.length,

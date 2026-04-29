@@ -1,6 +1,6 @@
 import { createDefaultProject } from "./defaultProject";
 import type { ValidationResult, WorldProject } from "./types";
-import { worldProjectToDocument } from "./worldDocument";
+import { worldProjectToDocument } from "./core/worldDocument";
 import { validateWorldDocument } from "./core/schema/validators";
 import { isTerrainFlat } from "./core/rules/terrainRules";
 

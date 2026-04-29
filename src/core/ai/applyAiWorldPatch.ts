@@ -1,5 +1,5 @@
 import type { WorldProject } from "../../types";
-import type { WorldPatch } from "./aiWorldCommandSchema";
+import type { WorldPatch } from "./worldPatchSchema";
 import { validateAiPatch } from "./worldPatchValidator";
 
 function clone<T>(value: T): T {
@@ -62,4 +62,3 @@ export function applyAiWorldPatch(project: WorldProject, patch: WorldPatch): { p
   next.updatedAt = new Date().toISOString();
   return { project: next, issues: [] };
 }
-

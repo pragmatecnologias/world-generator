@@ -25,6 +25,7 @@ export type AssetDefinition = {
   name: string;
   category: string;
   filePath: string;
+  sourceType?: "builtin" | "glb" | "gltf";
   fileDataUrl?: string;
   thumbnailPath?: string;
   defaultScale: number;
@@ -32,6 +33,19 @@ export type AssetDefinition = {
   collisionType: "none" | "box" | "mesh" | "custom";
   canPaint: boolean;
   tags: string[];
+  bounds?: {
+    width: number;
+    height: number;
+    depth: number;
+  };
+  placementRules?: {
+    paintEligible: boolean;
+    scatterEligible: boolean;
+    alignToTerrain: boolean;
+    minScale?: number;
+    maxScale?: number;
+  };
+  importedAt?: string;
 };
 
 export type PlacedObject = {
@@ -177,11 +191,18 @@ export type WorldExportPackage = {
     name: string;
     category: string;
     filePath: string;
+    sourceType: "builtin" | "glb" | "gltf";
     defaultScale: number;
     collisionType: AssetDefinition["collisionType"];
     canPaint: boolean;
     tags: string[];
     hasSourceData: boolean;
+    bounds: {
+      width: number;
+      height: number;
+      depth: number;
+    };
+    placementRules?: AssetDefinition["placementRules"];
   }>;
   summary: {
     terrainHeights: number;

@@ -11,16 +11,20 @@ import type {
   ValidationResult,
   WorldProject,
 } from "./types";
-import { buildWorldExportPackage, exportWorld, loadProjectFromStorage, parseWorldPayload, resolveWorldProject, saveProjectToStorage, validateExportPackage } from "./export";
-import { validateProject } from "./validation";
+import { buildWorldExportPackage, exportWorld, loadProjectFromStorage, parseWorldPayload, resolveWorldProject, saveProjectToStorage, validateExportPackage } from "./core/export";
+import { validateProject } from "./core/validation";
 import { applyTerrainBrush, flattenRoadTerrain, isPointNearRoad, terrainIndex, terrainSlopeAt, terrainWorldToGrid } from "./viewport/terrain";
 import PreviewApp from "./PreviewApp";
 import { generateWorld } from "./core/generation/generateWorld";
+import { createSeededRng, hashString } from "./core/generation/random";
 import { DEFAULT_WORLD_GENERATION_CONFIG, type WorldGenerationConfig } from "./core/schema/WorldConfigSchema";
 import { validateWorldGenerationConfig } from "./core/schema/validators";
 import { applyAiWorldPatch } from "./core/ai/applyAiWorldPatch";
 import { validateAiPatch } from "./core/ai/worldPatchValidator";
-import type { WorldPatch } from "./core/ai/aiWorldCommandSchema";
+import type { WorldPatch } from "./core/ai/worldPatchSchema";
+import { applyAiWorldCommand } from "./core/ai/applyAiWorldCommand";
+import type { AiWorldCommand } from "./core/ai/aiWorldCommandSchema";
+import { validateAiWorldCommand } from "./core/ai/aiWorldCommandValidator";
 import {
   applyWorldOperation,
   validateWorldDocumentIntegrity,
@@ -28,7 +32,7 @@ import {
   worldProjectToDocument,
   type WorldDocument,
   type WorldOperation,
-} from "./worldDocument";
+} from "./core/worldDocument";
 
 type BottomTab = "assets" | "validation" | "console" | "layers" | "export" | "scene" | "json";
 type PanelMode = "docked" | "floating" | "hidden";
@@ -189,6 +193,9 @@ function EditorApp() {
   const [worldPatchDraft, setWorldPatchDraft] = useState(JSON.stringify({ op: "setEnvironment", value: { timeOfDay: "evening" } }, null, 2));
   const [worldPatchStatus, setWorldPatchStatus] = useState("AI patch ready");
   const [worldPatchIssues, setWorldPatchIssues] = useState<string[]>([]);
+  const [aiCommandDraft, setAiCommandDraft] = useState(JSON.stringify({ type: "generateOffroadTrack", seed: 42, difficulty: 0.5 }, null, 2));
+  const [aiCommandStatus, setAiCommandStatus] = useState("AI command ready");
+  const [aiCommandIssues, setAiCommandIssues] = useState<string[]>([]);
   const [workspaceStripCollapsed, setWorkspaceStripCollapsed] = useState(false);
   const [panelModes, setPanelModes] = useState<Record<WorkspacePanel, PanelMode>>({
     toolbox: "docked",
@@ -441,6 +448,39 @@ function EditorApp() {
     } catch (error) {
       setWorldPatchStatus(`Invalid AI patch JSON: ${String(error)}`);
       setWorldPatchIssues([String(error)]);
+    }
+  };
+
+  const applyAiCommandDraft = () => {
+    try {
+      const parsed = JSON.parse(aiCommandDraft) as AiWorldCommand | { commands: AiWorldCommand[] };
+      const commands = "commands" in parsed ? parsed.commands : [parsed];
+      const commandIssues = commands.flatMap((command) => validateAiWorldCommand(command));
+      setAiCommandIssues(commandIssues);
+      if (commandIssues.length > 0) {
+        setAiCommandStatus(`AI command invalid: ${commandIssues.join(" | ")}`);
+        return;
+      }
+      let next = project;
+      for (const command of commands) {
+        const result = applyAiWorldCommand(next, command);
+        if (result.issues.length > 0) {
+          setAiCommandIssues(result.issues);
+          setAiCommandStatus(`AI command rejected: ${result.issues.join(" | ")}`);
+          return;
+        }
+        next = result.project;
+      }
+      commit(() => next);
+      setAiCommandStatus(`Applied ${commands.length} AI command(s)`);
+      setAiCommandIssues([]);
+      setOperationHistory((current) => [
+        ...current.slice(-49),
+        `${new Date().toISOString()} :: applied ${commands.length} AI command(s)`,
+      ]);
+    } catch (error) {
+      setAiCommandStatus(`Invalid AI command JSON: ${String(error)}`);
+      setAiCommandIssues([String(error)]);
     }
   };
 
@@ -862,6 +902,16 @@ function EditorApp() {
       canPaint: true,
       tags: ["imported"],
       thumbnailPath: createAssetThumbnail(file.name.replace(/\.[^.]+$/, ""), "Imported"),
+      sourceType: file.name.endsWith(".gltf") ? "gltf" : "glb",
+      importedAt: new Date().toISOString(),
+      placementRules: {
+        paintEligible: true,
+        scatterEligible: true,
+        alignToTerrain: true,
+        minScale: 0.75,
+        maxScale: 1.5,
+      },
+      bounds: { width: 1, height: 1, depth: 1 },
     };
     commit((current) => ({
       ...current,
@@ -1012,15 +1062,16 @@ function EditorApp() {
     const minZ = Math.min(a.z, b.z);
     const maxZ = Math.max(a.z, b.z);
     const assets = zone.assetIds.length > 0 ? zone.assetIds : project.assets.filter((asset) => asset.canPaint).map((asset) => asset.id);
+    const rng = createSeededRng(hashString(`${zone.id}:${zone.name}:${zone.settings.count}:${zone.settings.minSpacing}`));
     commit((current) => {
       const generatedObjects = Array.from({ length: zone.settings.count }, () => {
-        const assetId = assets[Math.floor(Math.random() * assets.length)];
+        const assetId = assets[Math.floor(rng() * assets.length)];
         const asset = current.assets.find((entry) => entry.id === assetId) ?? current.assets[0];
         if (!asset) return null;
 
         for (let attempt = 0; attempt < 10; attempt += 1) {
-          const x = minX + Math.random() * (maxX - minX);
-          const z = minZ + Math.random() * (maxZ - minZ);
+          const x = minX + rng() * (maxX - minX);
+          const z = minZ + rng() * (maxZ - minZ);
           const grid = terrainWorldToGrid(new THREE.Vector3(x, 0, z), current.terrain);
           const y = current.terrain.heights[grid.index] ?? 0;
           const slope = terrainSlopeAt(new THREE.Vector3(x, y, z), current.terrain);
@@ -1034,11 +1085,11 @@ function EditorApp() {
             assetId,
             name: `${asset.name} Scatter`,
             position: { x, y, z },
-            rotation: { x: 0, y: zone.settings.randomRotation ? Math.random() * Math.PI * 2 : 0, z: 0 },
+            rotation: { x: 0, y: zone.settings.randomRotation ? rng() * Math.PI * 2 : 0, z: 0 },
             scale: {
-              x: zone.settings.randomScaleMin + Math.random() * (zone.settings.randomScaleMax - zone.settings.randomScaleMin),
-              y: zone.settings.randomScaleMin + Math.random() * (zone.settings.randomScaleMax - zone.settings.randomScaleMin),
-              z: zone.settings.randomScaleMin + Math.random() * (zone.settings.randomScaleMax - zone.settings.randomScaleMin),
+              x: zone.settings.randomScaleMin + rng() * (zone.settings.randomScaleMax - zone.settings.randomScaleMin),
+              y: zone.settings.randomScaleMin + rng() * (zone.settings.randomScaleMax - zone.settings.randomScaleMin),
+              z: zone.settings.randomScaleMin + rng() * (zone.settings.randomScaleMax - zone.settings.randomScaleMin),
             },
             layerId: "layer-props",
             visible: true,
@@ -2343,6 +2394,27 @@ function EditorApp() {
                 </div>
                 <div className="muted">{worldPatchStatus}</div>
                 {worldPatchIssues.length > 0 ? <div className="muted code">issues: {worldPatchIssues.join(" | ")}</div> : <div className="muted code">issues: clean</div>}
+              </div>
+              <div className="list-item">
+                <div><strong>AiWorldCommand</strong></div>
+                <textarea
+                  className="code"
+                  style={{ width: "100%", minHeight: "180px" }}
+                  value={aiCommandDraft}
+                  onChange={(event) => setAiCommandDraft(event.target.value)}
+                  placeholder='{"type":"generateOffroadTrack","seed":42,"difficulty":0.5}'
+                />
+                <div className="chip-row" style={{ marginBottom: "0.5rem" }}>
+                  <button onClick={() => setAiCommandDraft(JSON.stringify({ type: "generateOffroadTrack", seed: 42, difficulty: 0.5 }, null, 2))}>Load Track Generator</button>
+                  <button onClick={() => setAiCommandDraft(JSON.stringify({ type: "makeTerrainMoreDramatic", amount: 0.6, seed: 99 }, null, 2))}>Load Dramatic Terrain</button>
+                  <button onClick={() => setAiCommandDraft(JSON.stringify({ type: "addRockyBorder", density: 8, seed: 77 }, null, 2))}>Load Rocky Border</button>
+                  <button onClick={() => setAiCommandDraft(JSON.stringify({ type: "applyWorldPatch", patch: { op: "setEnvironment", value: { timeOfDay: "evening" } } }, null, 2))}>Load Patch Bridge</button>
+                </div>
+                <div className="chip-row">
+                  <button onClick={applyAiCommandDraft}>Apply AI Command</button>
+                </div>
+                <div className="muted">{aiCommandStatus}</div>
+                {aiCommandIssues.length > 0 ? <div className="muted code">issues: {aiCommandIssues.join(" | ")}</div> : <div className="muted code">issues: clean</div>}
               </div>
               <div className="list-item">
                 <div><strong>WorldDocument</strong></div>

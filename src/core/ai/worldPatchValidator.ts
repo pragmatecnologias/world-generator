@@ -1,4 +1,4 @@
-import type { WorldPatch } from "./aiWorldCommandSchema";
+import type { WorldPatch } from "./worldPatchSchema";
 
 export function validateAiPatch(patch: WorldPatch): string[] {
   const issues: string[] = [];
@@ -30,4 +30,3 @@ export function validateAiPatch(patch: WorldPatch): string[] {
   }
   return issues;
 }
-
