@@ -74,6 +74,136 @@ function buildBaseMaterials(): TerrainMaterial[] {
   ];
 }
 
+function applyTerrainFeaturePass(terrain: TerrainData, config: WorldGenerationConfig) {
+  const rng = createSeededRng(config.seed + 4444);
+  let next = terrain;
+  const halfW = terrain.width / 2;
+  const halfD = terrain.depth / 2;
+  const featureCount = config.theme === "mountain" ? 6 : config.theme === "biblical" ? 5 : 4;
+
+  for (let i = 0; i < featureCount; i += 1) {
+    const angle = (i / featureCount) * Math.PI * 2;
+    const radial = 0.18 + rng() * 0.22;
+    const x = Math.cos(angle) * halfW * radial + (rng() - 0.5) * halfW * 0.12;
+    const z = Math.sin(angle) * halfD * radial + (rng() - 0.5) * halfD * 0.12;
+    const size = terrain.width * (0.08 + rng() * 0.08);
+    const mode = i % 2 === 0 ? "raise" : "lower";
+    next = applyTerrainBrush(
+      next,
+      new THREE.Vector3(x, 0, z),
+      {
+        size,
+        strength: config.theme === "mountain" ? 0.9 : 0.6 + rng() * 0.2,
+        falloff: "smooth",
+        materialId: mode === "raise" ? "rock" : "mud",
+        flattenHeight: 0,
+      },
+      mode,
+    );
+  }
+
+  const ridgeAxis = rng() > 0.5 ? "x" : "z";
+  const ridgeCount = 3 + Math.round(rng() * 2);
+  for (let i = 0; i < ridgeCount; i += 1) {
+    const offset = (i / Math.max(1, ridgeCount - 1)) * 2 - 1;
+    const x = ridgeAxis === "x" ? offset * halfW * 0.28 : (rng() - 0.5) * halfW * 0.16;
+    const z = ridgeAxis === "z" ? offset * halfD * 0.28 : (rng() - 0.5) * halfD * 0.16;
+    const size = terrain.width * (0.12 + rng() * 0.06);
+    const strength = 0.45 + rng() * 0.25;
+    next = applyTerrainBrush(
+      next,
+      new THREE.Vector3(x, 0, z),
+      {
+        size,
+        strength,
+        falloff: "smooth",
+        materialId: "rock",
+      },
+      "raise",
+    );
+  }
+
+  const basinX = (rng() - 0.5) * halfW * 0.3;
+  const basinZ = (rng() - 0.5) * halfD * 0.3;
+  next = applyTerrainBrush(
+    next,
+    new THREE.Vector3(basinX, 0, basinZ),
+    { size: terrain.width * 0.18, strength: 0.7, falloff: "smooth", materialId: config.theme === "desert" ? "sand" : "mud" },
+    "lower",
+  );
+
+  return next;
+}
+
+function applyThemeSpecificPass(terrain: TerrainData, config: WorldGenerationConfig) {
+  const rng = createSeededRng(config.seed + 8181);
+  let next = terrain;
+  const halfW = terrain.width / 2;
+  const halfD = terrain.depth / 2;
+
+  if (config.theme === "desert") {
+    for (let i = 0; i < 5; i += 1) {
+      const x = (rng() - 0.5) * halfW * 0.6;
+      const z = (rng() - 0.5) * halfD * 0.6;
+      next = applyTerrainBrush(next, new THREE.Vector3(x, 0, z), { size: terrain.width * 0.14, strength: 0.35, falloff: "smooth", materialId: "sand" }, "raise");
+      next = applyTerrainBrush(next, new THREE.Vector3(x + terrain.width * 0.04, 0, z - terrain.depth * 0.03), { size: terrain.width * 0.08, strength: 0.6, falloff: "smooth", materialId: "sand" }, "flatten");
+    }
+  } else if (config.theme === "forest") {
+    for (let i = 0; i < 4; i += 1) {
+      const x = (rng() - 0.5) * halfW * 0.55;
+      const z = (rng() - 0.5) * halfD * 0.55;
+      next = applyTerrainBrush(next, new THREE.Vector3(x, 0, z), { size: terrain.width * 0.1, strength: 0.55, falloff: "smooth", materialId: "grass" }, "raise");
+      next = applyTerrainBrush(next, new THREE.Vector3(x * 0.45, 0, z * 0.45), { size: terrain.width * 0.06, strength: 0.7, falloff: "smooth", materialId: "grass" }, "smooth");
+    }
+  } else if (config.theme === "biblical") {
+    for (let i = 0; i < 5; i += 1) {
+      const ridgeX = (i - 2) * halfW * 0.12 + (rng() - 0.5) * halfW * 0.08;
+      const ridgeZ = (rng() - 0.5) * halfD * 0.35;
+      next = applyTerrainBrush(next, new THREE.Vector3(ridgeX, 0, ridgeZ), { size: terrain.width * 0.14, strength: 0.7, falloff: "smooth", materialId: "rock" }, "raise");
+      next = applyTerrainBrush(next, new THREE.Vector3(ridgeX + terrain.width * 0.03, 0, ridgeZ - terrain.depth * 0.05), { size: terrain.width * 0.1, strength: 0.45, falloff: "smooth", materialId: "mud" }, "lower");
+    }
+  } else if (config.theme === "mountain") {
+    for (let i = 0; i < 6; i += 1) {
+      const x = (rng() - 0.5) * halfW * 0.42;
+      const z = (rng() - 0.5) * halfD * 0.42;
+      next = applyTerrainBrush(next, new THREE.Vector3(x, 0, z), { size: terrain.width * 0.1, strength: 0.95, falloff: "smooth", materialId: "rock" }, "raise");
+      next = applyTerrainBrush(next, new THREE.Vector3(x - terrain.width * 0.04, 0, z + terrain.depth * 0.02), { size: terrain.width * 0.07, strength: 0.65, falloff: "smooth", materialId: "rock" }, "smooth");
+    }
+  } else {
+    for (let i = 0; i < 4; i += 1) {
+      const x = (rng() - 0.5) * halfW * 0.5;
+      const z = (rng() - 0.5) * halfD * 0.5;
+      next = applyTerrainBrush(next, new THREE.Vector3(x, 0, z), { size: terrain.width * 0.09, strength: 0.45, falloff: "smooth", materialId: "mud" }, rng() > 0.5 ? "raise" : "lower");
+    }
+  }
+
+  return next;
+}
+
+function deriveMaterialMapFromHeights(terrain: TerrainData, theme: WorldGenerationConfig["theme"], heightScale: number) {
+  const materialMap = Array.from({ length: terrain.heights.length }, () => "grass");
+  for (let i = 0; i < terrain.heights.length; i += 1) {
+    const x = i % terrain.resolution;
+    const z = Math.floor(i / terrain.resolution);
+    const height = terrain.heights[i];
+    const left = terrain.heights[terrainIndex(Math.max(0, x - 1), z, terrain.resolution)] ?? height;
+    const right = terrain.heights[terrainIndex(Math.min(terrain.resolution - 1, x + 1), z, terrain.resolution)] ?? height;
+    const up = terrain.heights[terrainIndex(x, Math.min(terrain.resolution - 1, z + 1), terrain.resolution)] ?? height;
+    const down = terrain.heights[terrainIndex(x, Math.max(0, z - 1), terrain.resolution)] ?? height;
+    const slope = Math.hypot(right - left, up - down);
+    if (slope > heightScale * 0.085) {
+      materialMap[i] = "rock";
+    } else if (height < -heightScale * 0.08) {
+      materialMap[i] = theme === "desert" ? "sand" : "mud";
+    } else if (height > heightScale * 0.12) {
+      materialMap[i] = "dirt";
+    } else {
+      materialMap[i] = theme === "forest" ? "grass" : theme === "offroad" ? "track" : "grass";
+    }
+  }
+  return materialMap;
+}
+
 export function generateTerrain(config: WorldGenerationConfig): TerrainData {
   const { terrain, seed, theme } = config;
   const heights = Array.from({ length: terrain.resolution * terrain.resolution }, (_, index) => {
@@ -118,6 +248,10 @@ export function generateTerrain(config: WorldGenerationConfig): TerrainData {
     heights,
     materialMap,
   };
+
+  terrainData = applyTerrainFeaturePass(terrainData, config);
+  terrainData = applyThemeSpecificPass(terrainData, config);
+  terrainData.materialMap = deriveMaterialMapFromHeights(terrainData, theme, terrain.heightScale);
 
   const patchCenters = [
     { x: -terrain.width * 0.22, z: terrain.depth * 0.15, materialId: "grass", size: terrain.width * 0.18 },

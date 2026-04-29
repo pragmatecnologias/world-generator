@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
 import ThreeViewport from "./viewport/ThreeViewport";
 import { createDefaultProject } from "./defaultProject";
 import type {
@@ -11,12 +10,11 @@ import type {
   ValidationResult,
   WorldProject,
 } from "./types";
-import { buildWorldExportPackage, exportWorld, loadProjectFromStorage, parseWorldPayload, resolveWorldProject, saveProjectToStorage, validateExportPackage } from "./core/export";
+import { buildWorldExportPackage, exportWorld, loadProjectFromStorage, validateExportPackage } from "./core/export";
 import { validateProject } from "./core/validation";
-import { flattenRoadTerrain, terrainSlopeAt, terrainWorldToGrid } from "./viewport/terrain";
+import { flattenRoadTerrain } from "./viewport/terrain";
 import PreviewApp from "./PreviewApp";
 import { generateWorld } from "./core/generation/generateWorld";
-import { createSeededRng, hashString } from "./core/generation/random";
 import { DEFAULT_WORLD_GENERATION_CONFIG, type WorldGenerationConfig } from "./core/schema/WorldConfigSchema";
 import { validateWorldGenerationConfig } from "./core/schema/validators";
 import { applyAiWorldPatch } from "./core/ai/applyAiWorldPatch";
@@ -34,6 +32,34 @@ import {
   createProofPreviewHash,
   generateProofTerrain,
 } from "./core/generation/editorWorkflows";
+import {
+  applyAiCommandText,
+  applyGenerationConfigText,
+  applyWorldOperationBundleText,
+  applyWorldPatchText,
+  buildEvidenceBundle,
+} from "./core/editor/editorActions";
+import {
+  createDownloadStatus,
+  createEvidenceFileName,
+  createReloadProofStatus,
+  createSaveFileName,
+  createSaveStatus,
+  exportProjectSave,
+  loadWorldProjectFromText,
+  saveProjectSnapshot,
+} from "./core/editor/sessionActions";
+import {
+  appendImportedAsset,
+  buildImportedAssetDefinition,
+  deleteObjectById,
+  duplicateObjectById,
+  generateScatterForZone,
+  patchAssetById,
+  patchObjectById,
+  patchRoadById,
+  patchRoadPointById,
+} from "./core/editor/projectMutations";
 import { runProofRun } from "./core/validation/proofRunner";
 import {
   applyWorldOperation,
@@ -91,7 +117,7 @@ function updateProjectHistory(
   setProject(next);
   setHistory((past) => [...past.slice(-49), next]);
   setFuture([]);
-  saveProjectToStorage(next);
+  saveProjectSnapshot(next);
 }
 
 function downloadFile(name: string, content: string) {
@@ -285,7 +311,7 @@ function EditorApp() {
     const timer = window.setTimeout(() => {
       const hash = stableHash(project);
       if (hash !== lastSavedHashRef.current) {
-        saveProjectToStorage(project);
+        saveProjectSnapshot(project);
         lastSavedHashRef.current = hash;
         setHasUnsavedChanges(false);
         setStatusMessage("Autosaved");
@@ -357,7 +383,7 @@ function EditorApp() {
       const next = updater(current);
       setHistory((past) => [...past, current].slice(-50));
       setFuture([]);
-      saveProjectToStorage(next);
+      saveProjectSnapshot(next);
       return next;
     });
   };
@@ -375,7 +401,7 @@ function EditorApp() {
     setProject(nextProject);
     setHistory((past) => [...past, project].slice(-50));
     setFuture([]);
-    saveProjectToStorage(nextProject);
+    saveProjectSnapshot(nextProject);
     setStatusMessage(message);
     setJsonStatus(message);
   };
@@ -408,90 +434,57 @@ function EditorApp() {
   };
 
   const applyGenerationConfigDraft = () => {
-    try {
-      const parsed = JSON.parse(worldConfigDraft) as WorldGenerationConfig;
-      const issues = validateWorldGenerationConfig(parsed);
-      setWorldConfigIssues(issues);
-      if (issues.length > 0) {
-        setWorldConfigStatus(`Generation config invalid: ${issues.join(" | ")}`);
-        return;
-      }
-      const generated = generateWorld(parsed);
-      commit(() => generated);
-      setSelectionObjectId(generated.objects[0]?.id);
-      setSelectedAssetId(generated.assets[0]?.id);
-      setWorldConfigStatus(`Generated world from seed ${parsed.seed}`);
-      setJsonStatus(`Generated ${generated.name} from JSON config`);
-      setBottomTab("scene");
-      setOperationHistory((current) => [
-        ...current.slice(-49),
-        `${new Date().toISOString()} :: generated world from config seed ${parsed.seed}`,
-      ]);
-    } catch (error) {
-      setWorldConfigStatus(`Invalid generation config: ${String(error)}`);
-      setWorldConfigIssues([String(error)]);
+    const result = applyGenerationConfigText(worldConfigDraft);
+    setWorldConfigIssues(result.issues);
+    if (result.issues.length > 0 || !result.project) {
+      setWorldConfigStatus(`Generation config invalid: ${result.issues.join(" | ")}`);
+      return;
     }
+    const generated = result.project;
+    commit(() => generated);
+    setSelectionObjectId(generated.objects[0]?.id);
+    setSelectedAssetId(generated.assets[0]?.id);
+    setWorldConfigStatus(`Generated world from seed ${generated.id.replace("generated-", "")}`);
+    setJsonStatus(`Generated ${generated.name} from JSON config`);
+    setBottomTab("scene");
+    setOperationHistory((current) => [
+      ...current.slice(-49),
+      `${new Date().toISOString()} :: generated world from config seed ${generated.id.replace("generated-", "")}`,
+    ]);
   };
 
   const applyWorldPatchDraft = () => {
-    try {
-      const parsed = JSON.parse(worldPatchDraft) as WorldPatch;
-      const issues = validateAiPatch(parsed);
-      setWorldPatchIssues(issues);
-      if (issues.length > 0) {
-        setWorldPatchStatus(`AI patch invalid: ${issues.join(" | ")}`);
-        return;
-      }
-      const result = applyAiWorldPatch(project, parsed);
-      if (result.issues.length > 0) {
-        setWorldPatchIssues(result.issues);
-        setWorldPatchStatus(`AI patch rejected: ${result.issues.join(" | ")}`);
-        return;
-      }
-      commit(() => result.project);
-      setWorldPatchStatus(`Applied AI patch: ${parsed.op}`);
-      setJsonStatus(`Applied AI patch: ${parsed.op}`);
-      setOperationHistory((current) => [
-        ...current.slice(-49),
-        `${new Date().toISOString()} :: applied AI patch ${parsed.op}`,
-      ]);
-    } catch (error) {
-      setWorldPatchStatus(`Invalid AI patch JSON: ${String(error)}`);
-      setWorldPatchIssues([String(error)]);
+    const result = applyWorldPatchText(worldDocument, worldPatchDraft);
+    setWorldPatchIssues(result.issues);
+    if (result.issues.length > 0 || !result.document) {
+      setWorldPatchStatus(`AI patch invalid: ${result.issues.join(" | ")}`);
+      return;
     }
+    const nextProject = worldDocumentToProject(result.document);
+    commit(() => nextProject);
+    setWorldPatchStatus("Applied AI patch");
+    setJsonStatus("Applied AI patch");
+    setOperationHistory((current) => [
+      ...current.slice(-49),
+      `${new Date().toISOString()} :: applied AI patch`,
+    ]);
   };
 
   const applyAiCommandDraft = () => {
-    try {
-      const parsed = JSON.parse(aiCommandDraft) as AiWorldCommand | { commands: AiWorldCommand[] };
-      const commands = "commands" in parsed ? parsed.commands : [parsed];
-      const commandIssues = commands.flatMap((command) => validateAiWorldCommand(command));
-      setAiCommandIssues(commandIssues);
-      if (commandIssues.length > 0) {
-        setAiCommandStatus(`AI command invalid: ${commandIssues.join(" | ")}`);
-        return;
-      }
-      let next = project;
-      for (const command of commands) {
-        const result = applyAiWorldCommand(next, command);
-        if (result.issues.length > 0) {
-          setAiCommandIssues(result.issues);
-          setAiCommandStatus(`AI command rejected: ${result.issues.join(" | ")}`);
-          return;
-        }
-        next = result.project;
-      }
-      commit(() => next);
-      setAiCommandStatus(`Applied ${commands.length} AI command(s)`);
-      setAiCommandIssues([]);
-      setOperationHistory((current) => [
-        ...current.slice(-49),
-        `${new Date().toISOString()} :: applied ${commands.length} AI command(s)`,
-      ]);
-    } catch (error) {
-      setAiCommandStatus(`Invalid AI command JSON: ${String(error)}`);
-      setAiCommandIssues([String(error)]);
+    const result = applyAiCommandText(project, aiCommandDraft);
+    setAiCommandIssues(result.issues);
+    if (result.issues.length > 0 || !result.project) {
+      setAiCommandStatus(`AI command invalid: ${result.issues.join(" | ")}`);
+      return;
     }
+    const nextProject = result.project;
+    commit(() => nextProject);
+    setAiCommandStatus(`Applied ${result.count} AI command(s)`);
+    setAiCommandIssues([]);
+    setOperationHistory((current) => [
+      ...current.slice(-49),
+      `${new Date().toISOString()} :: applied ${result.count} AI command(s)`,
+    ]);
   };
 
   const loadOperationExample = async () => {
@@ -517,17 +510,9 @@ function EditorApp() {
       "sunset_environment.json",
     ];
     try {
-      let nextDocument = worldDocument;
-      for (const file of files) {
-        const response = await fetch(`/operations/${file}`);
-        if (!response.ok) throw new Error(`Failed to load ${file}: HTTP ${response.status}`);
-        const payload = JSON.parse(await response.text()) as WorldOperation | { operations: WorldOperation[] };
-        const operations = "operations" in payload ? payload.operations : [payload];
-        for (const operation of operations) {
-          nextDocument = applyWorldOperation(nextDocument, operation);
-        }
-      }
-      applyWorldDocument(nextDocument, "Auto JSON proof applied all operation examples");
+      const result = await applyWorldOperationBundleText(worldDocument, files, fetch);
+      if (result.issues.length > 0 || !result.document) throw new Error(result.issues.join(" | "));
+      applyWorldDocument(result.document, "Auto JSON proof applied all operation examples");
       proofSaveAndReload();
       onExport();
       setBottomTab("validation");
@@ -563,7 +548,7 @@ function EditorApp() {
       setFuture([]);
       setSelectedAssetId(imported.id);
       setSelectionObjectId("obj-imported-gltf-proof");
-      saveProjectToStorage(next);
+      saveProjectSnapshot(next);
       lastSavedHashRef.current = stableHash(next);
       setHasUnsavedChanges(false);
       exportWorld(next);
@@ -581,17 +566,8 @@ function EditorApp() {
   };
 
   const exportJsonEvidence = () => {
-    const payload = {
-      createdAt: new Date().toISOString(),
-      projectHash: stableHash(project),
-      worldDocumentHash: stableHash(worldDocument),
-      operationHistory,
-      proofRun,
-      validation,
-      worldDocument,
-      exportPackage: buildWorldExportPackage(project),
-    };
-    downloadFile(`${project.name.replace(/\s+/g, "-").toLowerCase()}-evidence.json`, JSON.stringify(payload, null, 2));
+    const payload = buildEvidenceBundle(project, worldDocument, operationHistory, proofRun, validation);
+    downloadFile(createEvidenceFileName(project), JSON.stringify(payload, null, 2));
     setStatusMessage("Exported JSON evidence bundle");
   };
 
@@ -635,14 +611,14 @@ function EditorApp() {
     setSelectionObjectId(fresh.objects[0]?.id);
     setSelectedAssetId(fresh.assets[0]?.id);
     setStatusMessage("Created a new world");
-    saveProjectToStorage(fresh);
+    saveProjectSnapshot(fresh);
   };
 
   const onSave = () => {
-    saveProjectToStorage(project);
+    saveProjectSnapshot(project);
     lastSavedHashRef.current = stableHash(project);
     setHasUnsavedChanges(false);
-    setStatusMessage("Saved to local storage");
+    setStatusMessage(createSaveStatus());
   };
 
   const onExport = () => {
@@ -722,9 +698,8 @@ function EditorApp() {
   };
 
   const onSaveAs = () => {
-    const payload = JSON.stringify(project, null, 2);
-    downloadFile(`${project.name.replace(/\s+/g, "-").toLowerCase()}-save.json`, payload);
-    setStatusMessage("Downloaded save file");
+    downloadFile(createSaveFileName(project), exportProjectSave(project));
+    setStatusMessage(createDownloadStatus());
   };
 
   const onPlayTest = () => {
@@ -738,7 +713,7 @@ function EditorApp() {
     setFuture((stack) => [project, ...stack]);
     setHistory((stack) => stack.slice(0, -1));
     setProject(previous);
-    saveProjectToStorage(previous);
+    saveProjectSnapshot(previous);
     setStatusMessage("Undo");
   };
 
@@ -748,7 +723,7 @@ function EditorApp() {
     setHistory((stack) => [...stack, project].slice(-50));
     setFuture(rest);
     setProject(next);
-    saveProjectToStorage(next);
+    saveProjectSnapshot(next);
     setStatusMessage("Redo");
   };
 
@@ -758,19 +733,18 @@ function EditorApp() {
     setFuture([]);
     setSelectionObjectId(payload.objects[0]?.id);
     setSelectedAssetId(payload.assets[0]?.id);
-    saveProjectToStorage(payload);
+    saveProjectSnapshot(payload);
     setStatusMessage(`Loaded ${payload.name}`);
   };
 
   const handleLoadFile = async (file: File | null) => {
     if (!file) return;
     const text = await file.text();
-    const payload = parseWorldPayload(text);
-    if (!payload) {
+    const loaded = loadWorldProjectFromText(text);
+    if (!loaded) {
       setStatusMessage("Could not read that file");
       return;
     }
-    const loaded = resolveWorldProject(payload);
     loadWorldPayload(loaded);
   };
 
@@ -782,33 +756,12 @@ function EditorApp() {
       reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(file);
     });
-    const asset: AssetDefinition = {
-      id: crypto.randomUUID(),
-      name: file.name.replace(/\.[^.]+$/, ""),
-      category: "Imported",
-      filePath: file.name,
-      fileDataUrl: dataUrl,
-      defaultScale: 1,
-      collisionType: "box",
-      canPaint: true,
-      tags: ["imported"],
-      thumbnailPath: createAssetThumbnail(file.name.replace(/\.[^.]+$/, ""), "Imported"),
-      sourceType: file.name.endsWith(".gltf") ? "gltf" : "glb",
-      importedAt: new Date().toISOString(),
-      placementRules: {
-        paintEligible: true,
-        scatterEligible: true,
-        alignToTerrain: true,
-        minScale: 0.75,
-        maxScale: 1.5,
-      },
-      bounds: { width: 1, height: 1, depth: 1 },
-    };
-    commit((current) => ({
-      ...current,
-      updatedAt: new Date().toISOString(),
-      assets: [...current.assets, asset],
-    }));
+    const asset = buildImportedAssetDefinition(
+      file.name,
+      dataUrl,
+      createAssetThumbnail(file.name.replace(/\.[^.]+$/, ""), "Imported") ?? "",
+    );
+    commit((current) => appendImportedAsset(current, asset));
     setSelectedAssetId(asset.id);
     setBottomTab("assets");
     setStatusMessage(`Imported ${file.name}`);
@@ -840,57 +793,27 @@ function EditorApp() {
 
   const duplicateSelected = () => {
     if (!selectedObject) return;
-    commit((current) => {
-      const object = current.objects.find((entry) => entry.id === selectedObject.id);
-      if (!object) return current;
-      const nextObject = {
-        ...object,
-        id: crypto.randomUUID(),
-        name: `${object.name} Copy`,
-        position: { x: object.position.x + 2, y: object.position.y, z: object.position.z + 2 },
-      };
-      return {
-        ...current,
-        updatedAt: new Date().toISOString(),
-        objects: [...current.objects, nextObject],
-      };
-    });
+    commit((current) => duplicateObjectById(current, selectedObject.id));
   };
 
   const deleteSelected = () => {
     if (!selectedObject) return;
-    commit((current) => ({
-      ...current,
-      updatedAt: new Date().toISOString(),
-      objects: current.objects.filter((object) => object.id !== selectedObject.id),
-    }));
+    commit((current) => deleteObjectById(current, selectedObject.id));
     setSelectionObjectId(undefined);
   };
 
   const updateSelectedObject = (patch: Partial<WorldProject["objects"][number]>) => {
     if (!selectedObject) return;
-    commit((current) => ({
-      ...current,
-      updatedAt: new Date().toISOString(),
-      objects: current.objects.map((object) =>
-        object.id === selectedObject.id ? { ...object, ...patch } : object,
-      ),
-    }));
+    commit((current) => patchObjectById(current, selectedObject.id, patch));
   };
 
   const updateSelectedAsset = (patch: Partial<AssetDefinition>) => {
     if (!selectedAsset) return;
-    commit((current) => ({
-      ...current,
-      updatedAt: new Date().toISOString(),
-      assets: current.assets.map((asset) =>
-        asset.id === selectedAsset.id ? { ...asset, ...patch } : asset,
-      ),
-    }));
+    commit((current) => patchAssetById(current, selectedAsset.id, patch));
   };
 
   const proofSaveAndReload = () => {
-    saveProjectToStorage(project);
+    saveProjectSnapshot(project);
     const loaded = loadProjectFromStorage();
     if (loaded) {
       setProject(loaded);
@@ -898,7 +821,7 @@ function EditorApp() {
       setFuture([]);
       setSelectionObjectId(loaded.objects[0]?.id);
       setSelectedAssetId(loaded.assets[0]?.id);
-      setStatusMessage("Saved and reloaded the current world from local storage");
+      setStatusMessage(createReloadProofStatus());
     } else {
       setStatusMessage("Unable to reload the saved project");
     }
@@ -906,39 +829,12 @@ function EditorApp() {
 
   const updateActiveRoad = (patch: Partial<WorldProject["roads"][number]>) => {
     if (!activeRoad) return;
-    commit((current) => {
-      const updatedRoads = current.roads.map((road) => (road.id === activeRoad.id ? { ...road, ...patch } : road));
-      const updatedRoad = updatedRoads.find((r) => r.id === activeRoad.id);
-      const terrainPatch = updatedRoad?.flattenTerrain ? flattenRoadTerrain(current.terrain, updatedRoads) : current.terrain;
-      return {
-        ...current,
-        updatedAt: new Date().toISOString(),
-        roads: updatedRoads,
-        terrain: terrainPatch,
-      };
-    });
+    commit((current) => patchRoadById(current, activeRoad.id, patch));
   };
 
   const updateActiveRoadPoint = (pointIndex: number, patch: Partial<WorldProject["roads"][number]["points"][number]>) => {
     if (!activeRoad) return;
-    commit((current) => {
-      const updatedRoads = current.roads.map((road) =>
-        road.id === activeRoad.id
-          ? {
-              ...road,
-              points: road.points.map((point, index) => (index === pointIndex ? { ...point, ...patch } : point)),
-            }
-          : road,
-      );
-      const updatedRoad = updatedRoads.find((r) => r.id === activeRoad.id);
-      const terrainPatch = updatedRoad?.flattenTerrain ? flattenRoadTerrain(current.terrain, updatedRoads) : current.terrain;
-      return {
-        ...current,
-        updatedAt: new Date().toISOString(),
-        roads: updatedRoads,
-        terrain: terrainPatch,
-      };
-    });
+    commit((current) => patchRoadPointById(current, activeRoad.id, pointIndex, patch));
   };
 
   const applyScatter = () => {
@@ -947,59 +843,7 @@ function EditorApp() {
       setStatusMessage("Define a scatter area with two clicks first");
       return;
     }
-    const [a, b] = zone.points;
-    const minX = Math.min(a.x, b.x);
-    const maxX = Math.max(a.x, b.x);
-    const minZ = Math.min(a.z, b.z);
-    const maxZ = Math.max(a.z, b.z);
-    const assets = zone.assetIds.length > 0 ? zone.assetIds : project.assets.filter((asset) => asset.canPaint).map((asset) => asset.id);
-    const rng = createSeededRng(hashString(`${zone.id}:${zone.name}:${zone.settings.count}:${zone.settings.minSpacing}`));
-    commit((current) => {
-      const generatedObjects = Array.from({ length: zone.settings.count }, () => {
-        const assetId = assets[Math.floor(rng() * assets.length)];
-        const asset = current.assets.find((entry) => entry.id === assetId) ?? current.assets[0];
-        if (!asset) return null;
-
-        for (let attempt = 0; attempt < 10; attempt += 1) {
-          const x = minX + rng() * (maxX - minX);
-          const z = minZ + rng() * (maxZ - minZ);
-          const grid = terrainWorldToGrid(new THREE.Vector3(x, 0, z), current.terrain);
-          const y = current.terrain.heights[grid.index] ?? 0;
-          const slope = terrainSlopeAt(new THREE.Vector3(x, y, z), current.terrain);
-          if (zone.settings.slopeLimit > 0 && slope > zone.settings.slopeLimit) continue;
-          if (zone.settings.minSpacing > 0) {
-            const tooClose = current.objects.some((object) => Math.hypot(object.position.x - x, object.position.z - z) < zone.settings.minSpacing);
-            if (tooClose) continue;
-          }
-          return {
-            id: crypto.randomUUID(),
-            assetId,
-            name: `${asset.name} Scatter`,
-            position: { x, y, z },
-            rotation: { x: 0, y: zone.settings.randomRotation ? rng() * Math.PI * 2 : 0, z: 0 },
-            scale: {
-              x: zone.settings.randomScaleMin + rng() * (zone.settings.randomScaleMax - zone.settings.randomScaleMin),
-              y: zone.settings.randomScaleMin + rng() * (zone.settings.randomScaleMax - zone.settings.randomScaleMin),
-              z: zone.settings.randomScaleMin + rng() * (zone.settings.randomScaleMax - zone.settings.randomScaleMin),
-            },
-            layerId: "layer-props",
-            visible: true,
-            locked: false,
-            collisionEnabled: false,
-          };
-        }
-        return null;
-      }).filter(Boolean);
-
-      return {
-        ...current,
-        updatedAt: new Date().toISOString(),
-        objects: [...current.objects, ...(generatedObjects as WorldProject["objects"])],
-        scatterZones: current.scatterZones.map((entry) =>
-          entry.id === zone.id ? { ...entry, generatedObjectIds: [...entry.generatedObjectIds, ...(generatedObjects as WorldProject["objects"]).map((item) => item.id)] } : entry,
-        ),
-      };
-    });
+    commit((current) => generateScatterForZone(current, zone.id, `${zone.id}:${zone.name}:${zone.settings.count}:${zone.settings.minSpacing}`));
     setStatusMessage(`Scatter generated from ${zone.name}`);
   };
 
@@ -1066,7 +910,7 @@ function EditorApp() {
       setProject(next);
       setHistory((stack) => [...stack, projectRef.current].slice(-50));
       setFuture([]);
-      saveProjectToStorage(next);
+      saveProjectSnapshot(next);
       lastSavedHashRef.current = stableHash(next);
       setHasUnsavedChanges(false);
       setSelectedAssetId(importedAsset?.id ?? next.assets[0]?.id);
