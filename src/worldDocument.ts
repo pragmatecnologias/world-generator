@@ -10,6 +10,7 @@ import type {
   ScatterZone,
   TerrainData,
   TerrainMaterial,
+  ShowcaseLayoutConfig,
   WorldProject,
 } from "./types";
 import { applyTerrainBrush } from "./viewport/terrain";
@@ -51,6 +52,7 @@ export type WorldDocument = {
     createdBy: string;
     lastEditedBy: string;
     tags: string[];
+    showcaseLayout?: ShowcaseLayoutConfig;
   };
   /** @deprecated legacy compatibility alias populated for older code paths. */
   foliage?: FoliageGroup[];
@@ -140,7 +142,8 @@ export function worldProjectToDocument(project: WorldProject): WorldDocument {
     metadata: {
       createdBy: "world-creator",
       lastEditedBy: "human-or-ai",
-      tags: [],
+      tags: project.metadata.tags ?? [],
+      showcaseLayout: project.metadata.showcaseLayout,
     },
     validation: {},
   };
@@ -195,6 +198,8 @@ export function worldDocumentToProject(document: WorldDocument): WorldProject {
     environment: canonical.environment,
     metadata: {
       description: canonical.project.description,
+      tags: canonical.metadata.tags,
+      showcaseLayout: canonical.metadata.showcaseLayout,
     },
   };
 }

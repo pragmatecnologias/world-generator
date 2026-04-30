@@ -21,6 +21,7 @@ export type AssetSemanticRole = "foliage" | "rock" | "barrier" | "prop" | "struc
 export function classifyAsset(asset: AssetDefinition): AssetSemanticRole {
   const name = `${asset.name} ${asset.category} ${asset.filePath}`.toLowerCase();
   const tags = asset.tags.map((tag) => tag.toLowerCase());
+  if (tags.some((tag) => /cliff|canyon|ridge/.test(tag)) || /cliff|canyon|ridge/.test(name)) return "rock";
   if (tags.some((tag) => /tree|foliage|bush|plant|grass/.test(tag)) || /tree|foliage|bush|plant|grass/.test(name)) return "foliage";
   if (tags.some((tag) => /rock|stone|boulder/.test(tag)) || /rock|stone|boulder/.test(name)) return "rock";
   if (tags.some((tag) => /barrier|fence|guardrail|wall/.test(tag)) || /barrier|fence|guardrail|wall/.test(name)) return "barrier";
@@ -57,6 +58,9 @@ export function inferAssetTags(asset: AssetDefinition): string[] {
   } else if (role === "rock") {
     tags.add("rock");
     tags.add("nature");
+    if (/cliff|canyon|ridge/i.test(asset.name) || /cliff|canyon|ridge/i.test(asset.filePath)) {
+      tags.add("cliff");
+    }
   } else if (role === "barrier") {
     tags.add("barrier");
     tags.add("track");

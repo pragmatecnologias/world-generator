@@ -75,6 +75,23 @@ button.ghost {
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
+.showcase-shell {
+  display: block;
+  grid-template-rows: none;
+}
+
+.showcase-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+
+.showcase-fullscreen .canvas-host,
+.showcase-fullscreen canvas {
+  width: 100%;
+  height: 100%;
+}
+
 .topbar {
   position: relative;
   display: grid;
@@ -318,6 +335,8 @@ button.ghost {
   margin: 0 0.75rem 0.75rem;
   padding: 0.75rem 0.8rem;
   border: 1px solid rgba(148, 163, 184, 0.18);
+  position: relative;
+  z-index: 50;
   border-radius: 1rem;
   background:
     linear-gradient(180deg, rgba(10, 15, 24, 0.82), rgba(8, 13, 22, 0.72)),

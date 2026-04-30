@@ -121,14 +121,16 @@ function roadDirectionAt(road: RoadDefinition, t: number) {
 function applyScenicLandforms(terrain: TerrainData, config: WorldGenerationConfig, preset: GenericPreset) {
   if (preset === "city") return terrain;
   const rng = createSeededRng(config.seed + 24601);
+  const showcasePreset = Boolean(config.metadata?.tags?.some((tag) => /showcase|kenney/i.test(tag)));
   let next = terrain;
   const halfW = terrain.width / 2;
   const halfD = terrain.depth / 2;
   const isDramatic = config.theme === "mountain" || config.theme === "biblical";
   const plateaus = [
-    { x: -halfW * 0.34, z: halfD * 0.16, size: terrain.width * 0.22, strength: isDramatic ? 1.05 : 0.88, materialId: "rock", mode: "raise" as const },
-    { x: halfW * 0.22, z: -halfD * 0.12, size: terrain.width * 0.18, strength: isDramatic ? 0.98 : 0.78, materialId: "rock", mode: "raise" as const },
-    { x: halfW * 0.02, z: halfD * 0.28, size: terrain.width * 0.16, strength: isDramatic ? 0.88 : 0.68, materialId: "grass", mode: "raise" as const },
+    { x: -halfW * 0.38, z: halfD * 0.18, size: terrain.width * 0.18, strength: isDramatic ? 1.28 : 1.05, materialId: "rock", mode: "raise" as const },
+    { x: halfW * 0.18, z: -halfD * 0.14, size: terrain.width * 0.16, strength: isDramatic ? 1.18 : 0.94, materialId: "rock", mode: "raise" as const },
+    { x: halfW * 0.03, z: halfD * 0.3, size: terrain.width * 0.14, strength: isDramatic ? 1.02 : 0.82, materialId: "grass", mode: "raise" as const },
+    { x: halfW * 0.33, z: halfD * 0.05, size: terrain.width * 0.12, strength: isDramatic ? 1.12 : 0.9, materialId: "rock", mode: "raise" as const },
   ];
   for (const plateau of plateaus) {
     next = applyTerrainBrush(
@@ -145,8 +147,10 @@ function applyScenicLandforms(terrain: TerrainData, config: WorldGenerationConfi
   }
 
   const valleys = [
-    { x: -halfW * 0.08, z: halfD * 0.03, size: terrain.width * 0.16, strength: 0.72, materialId: config.theme === "desert" ? "sand" : "mud" },
-    { x: halfW * 0.08, z: -halfD * 0.08, size: terrain.width * 0.13, strength: 0.65, materialId: config.theme === "desert" ? "sand" : "mud" },
+    { x: -halfW * 0.1, z: halfD * 0.02, size: terrain.width * 0.14, strength: 0.86, materialId: config.theme === "desert" ? "sand" : "mud" },
+    { x: halfW * 0.12, z: -halfD * 0.1, size: terrain.width * 0.12, strength: 0.82, materialId: config.theme === "desert" ? "sand" : "mud" },
+    { x: -halfW * 0.28, z: halfD * 0.22, size: terrain.width * 0.1, strength: 0.74, materialId: config.theme === "desert" ? "sand" : "mud" },
+    { x: halfW * 0.28, z: halfD * 0.18, size: terrain.width * 0.09, strength: 0.7, materialId: config.theme === "desert" ? "sand" : "mud" },
   ];
   for (const valley of valleys) {
     next = applyTerrainBrush(
@@ -160,6 +164,29 @@ function applyScenicLandforms(terrain: TerrainData, config: WorldGenerationConfi
       },
       "lower",
     );
+  }
+
+  if (showcasePreset) {
+    const heroFeatures = [
+      { x: -halfW * 0.12, z: -halfD * 0.06, size: terrain.width * 0.22, strength: 1.95, materialId: "rock", mode: "raise" as const },
+      { x: halfW * 0.18, z: halfD * 0.1, size: terrain.width * 0.2, strength: 1.72, materialId: "rock", mode: "raise" as const },
+      { x: -halfW * 0.34, z: halfD * 0.18, size: terrain.width * 0.12, strength: 1.28, materialId: "rock", mode: "raise" as const },
+      { x: halfW * 0.08, z: -halfD * 0.24, size: terrain.width * 0.14, strength: 1.18, materialId: "mud", mode: "lower" as const },
+      { x: -halfW * 0.24, z: halfD * 0.22, size: terrain.width * 0.12, strength: 1.08, materialId: "mud", mode: "lower" as const },
+    ];
+    for (const feature of heroFeatures) {
+      next = applyTerrainBrush(
+        next,
+        new THREE.Vector3(feature.x, 0, feature.z),
+        {
+          size: feature.size,
+          strength: feature.strength,
+          falloff: "smooth",
+          materialId: feature.materialId,
+        },
+        feature.mode,
+      );
+    }
   }
 
   return next;
@@ -858,6 +885,8 @@ export function generateGenericWorld(config: WorldGenerationConfig, preset: Gene
     layers: base.layers,
     metadata: {
       description: config.metadata?.description ?? `Generated ${preset} world from seed ${config.seed}`,
+      tags: [...new Set(["showcase", "kenney", preset, config.theme, ...(config.metadata?.tags ?? [])])],
+      showcaseLayout: config.metadata?.showcaseLayout,
     },
   };
 

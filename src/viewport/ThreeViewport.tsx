@@ -24,6 +24,12 @@ import {
   terrainSlopeAt,
   worldToTerrainHeight,
 } from "./terrain";
+import { createKenneyAssetObject } from "./kenneyAssets";
+import { buildKenneyCliffDressings, buildKenneyPathDressings } from "./kenneySceneDressings";
+import { buildKenneyShowcaseDiorama } from "./kenneyShowcaseRenderer";
+import { DEFAULT_KENNEY_SHOWCASE_LAYOUT } from "../core/schema/ShowcaseLayoutSchema";
+import { buildStructureOperations, buildWaterSurfaceOperations } from "../core/generation/fantasyPlacement";
+import { buildAssetMap } from "../domains/fantasy/fantasyAssets";
 
 type FoliagePaintSettings = {
   density: number;
@@ -52,6 +58,8 @@ type Props = {
   brush: BrushState;
   selectionObjectId?: string;
   selectedAssetId?: string;
+  selectedStructurePresetId?: string;
+  waterPondRadius?: number;
   foliageSettings: FoliagePaintSettings;
   scatterSettings: ScatterPaintSettings;
   playMode?: boolean;
@@ -275,7 +283,7 @@ function materialForAsset(asset: AssetDefinition, tint: THREE.Color) {
 }
 
 function cloneAssetObject(asset: AssetDefinition, loadedAsset: THREE.Object3D | undefined) {
-  const root = loadedAsset ? loadedAsset.clone(true) : makePlaceholderMesh(asset);
+  const root = loadedAsset ? loadedAsset.clone(true) : createKenneyAssetObject(asset) ?? makePlaceholderMesh(asset);
   root.traverse((node) => {
     if ((node as THREE.Mesh).isMesh) {
       const mesh = node as THREE.Mesh;
@@ -341,8 +349,8 @@ function createPathMesh(road: RoadDefinition, terrain: TerrainData) {
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geometry.computeVertexNormals();
   const material = isWater
-    ? new THREE.MeshStandardMaterial({ color: new THREE.Color("#58a7e6"), transparent: true, opacity: 0.78, roughness: 0.12, metalness: 0.02 })
-    : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
+    ? new THREE.MeshStandardMaterial({ color: new THREE.Color("#58a7e6"), transparent: true, opacity: 0.01, roughness: 0.12, metalness: 0.02, depthWrite: false })
+    : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, transparent: true, opacity: 0.08, depthWrite: false });
   return new THREE.Mesh(geometry, material);
 }
 
@@ -425,6 +433,8 @@ export default function ThreeViewport({
   brush,
   selectionObjectId,
   selectedAssetId,
+  selectedStructurePresetId = "town-hall",
+  waterPondRadius = 4,
   foliageSettings,
   scatterSettings,
   playMode = false,
@@ -449,11 +459,48 @@ export default function ThreeViewport({
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
   const selectionRingRef = useRef<THREE.Mesh | null>(null);
+  const decorativeRef = useRef<THREE.Group | null>(null);
+  const projectRef = useRef(project);
+  const activeToolRef = useRef(activeTool);
+  const brushRef = useRef(brush);
+  const selectionObjectIdRef = useRef(selectionObjectId);
+  const selectedAssetIdRef = useRef(selectedAssetId);
+  const selectedStructurePresetIdRef = useRef(selectedStructurePresetId);
+  const waterPondRadiusRef = useRef(waterPondRadius);
+  const foliageSettingsRef = useRef(foliageSettings);
+  const scatterSettingsRef = useRef(scatterSettings);
+  const readOnlyRef = useRef(readOnly);
+  const onProjectChangeRef = useRef(onProjectChange);
+  const onWorldOperationsRef = useRef(onWorldOperations);
+  const onSelectObjectRef = useRef(onSelectObject);
+  const onSelectTerrainCellRef = useRef(onSelectTerrainCell);
+  const onStatusRef = useRef(onStatus);
+  const onStatsRef = useRef(onStats);
   const [assetReady, setAssetReady] = useState(0);
 
   const terrain = useMemo(() => project.terrain, [project.terrain]);
   const isPathTool = activeTool === "road-draw" || activeTool === "path-draw";
   const isZoneTool = activeTool === "scatter" || activeTool === "zone-scatter";
+  const showcaseMode = Boolean(project.metadata?.tags?.some((tag) => /showcase|kenney/i.test(tag)));
+
+  useEffect(() => {
+    projectRef.current = project;
+    activeToolRef.current = activeTool;
+    brushRef.current = brush;
+    selectionObjectIdRef.current = selectionObjectId;
+    selectedAssetIdRef.current = selectedAssetId;
+    selectedStructurePresetIdRef.current = selectedStructurePresetId;
+    waterPondRadiusRef.current = waterPondRadius;
+    foliageSettingsRef.current = foliageSettings;
+    scatterSettingsRef.current = scatterSettings;
+    readOnlyRef.current = readOnly;
+    onProjectChangeRef.current = onProjectChange;
+    onWorldOperationsRef.current = onWorldOperations;
+    onSelectObjectRef.current = onSelectObject;
+    onSelectTerrainCellRef.current = onSelectTerrainCell;
+    onStatusRef.current = onStatus;
+    onStatsRef.current = onStats;
+  }, [project, activeTool, brush, selectionObjectId, selectedAssetId, foliageSettings, scatterSettings, readOnly, onProjectChange, onWorldOperations, onSelectObject, onSelectTerrainCell, onStatus, onStats]);
 
   useEffect(() => {
     const loader = new GLTFLoader();
@@ -489,41 +536,72 @@ export default function ThreeViewport({
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
+    const project = projectRef.current;
 
     const scene = new THREE.Scene();
     sceneRef.current = scene;
-    scene.background = new THREE.Color(project.environment.backgroundColor);
-    scene.fog = project.environment.fogEnabled
+    const showcaseLayout = project.metadata?.showcaseLayout ?? DEFAULT_KENNEY_SHOWCASE_LAYOUT;
+    scene.background = new THREE.Color(showcaseMode ? showcaseLayout.camera.backgroundColor : project.environment.backgroundColor);
+    scene.fog = showcaseMode
+      ? null
+      : project.environment.fogEnabled
       ? new THREE.FogExp2(project.environment.fogColor, project.environment.fogDensity)
       : null;
 
-    const skyDome = buildSkyDome(project.environment);
+    const skyDome = showcaseMode ? null : buildSkyDome(project.environment);
     if (skyDome) {
       scene.add(skyDome);
     }
 
-    const camera = new THREE.PerspectiveCamera(36, container.clientWidth / container.clientHeight, 0.1, 1000);
-    if (playMode) {
-      camera.position.set(0, 3.0, 12.5);
-      camera.lookAt(0, 1.1, 0);
+    const aspect = container.clientWidth / container.clientHeight;
+    const showcaseFrustumHeight = showcaseLayout.camera.frustumHeight;
+    const showcaseHalfFrustumHeight = showcaseFrustumHeight / 2;
+    const camera = showcaseMode
+      ? new THREE.OrthographicCamera(
+          -showcaseHalfFrustumHeight * aspect,
+          showcaseHalfFrustumHeight * aspect,
+          showcaseHalfFrustumHeight,
+          -showcaseHalfFrustumHeight,
+          0.1,
+          1000,
+        )
+      : new THREE.PerspectiveCamera(30, aspect, 0.1, 1000);
+    if (showcaseMode) {
+      camera.position.set(showcaseLayout.camera.position.x, showcaseLayout.camera.position.y, showcaseLayout.camera.position.z);
+      camera.lookAt(showcaseLayout.camera.target.x, showcaseLayout.camera.target.y, showcaseLayout.camera.target.z);
+      camera.zoom = showcaseLayout.camera.zoom;
+      camera.updateProjectionMatrix();
+    } else if (playMode) {
+      camera.position.set(0, 5.2, 18.5);
+      camera.lookAt(0, 1.4, 0);
     } else {
-      camera.position.set(36, 26, 34);
-      camera.lookAt(0, 0.8, 0);
+      camera.position.set(78, 70, 78);
+      camera.lookAt(0, 1.4, 0);
     }
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
+    renderer.toneMapping = showcaseMode ? THREE.ACESFilmicToneMapping : THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = showcaseMode ? 1.22 : 1.1;
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.replaceChildren(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.target.set(0, playMode ? 1.2 : 0.5, 0);
+    controls.target.set(
+      showcaseMode ? showcaseLayout.camera.target.x : 0,
+      showcaseMode ? showcaseLayout.camera.target.y : playMode ? 1.6 : 0.5,
+      showcaseMode ? showcaseLayout.camera.target.z : 0,
+    );
     controls.enablePan = !playMode;
+    if (showcaseMode) {
+      controls.enableRotate = true;
+      controls.enablePan = true;
+      controls.enableZoom = true;
+    }
 
     const transformControls = new TransformControls(camera, renderer.domElement);
     transformControls.setMode("translate");
@@ -532,14 +610,14 @@ export default function ThreeViewport({
       controls.enabled = !event.value;
     });
     transformControls.addEventListener("objectChange", () => {
-      const selectionId = selectionObjectId;
+      const selectionId = selectionObjectIdRef.current;
       if (!selectionId) return;
       const rec = objectMapRef.current.get(selectionId);
       if (!rec) return;
       const { x, y, z } = rec.object.position;
       const { x: rx, y: ry, z: rz } = rec.object.rotation;
       const { x: sx, y: sy, z: sz } = rec.object.scale;
-      onProjectChange((current) => ({
+      onProjectChangeRef.current?.((current) => ({
         ...current,
         updatedAt: new Date().toISOString(),
         objects: current.objects.map((object) =>
@@ -557,12 +635,16 @@ export default function ThreeViewport({
     transformRef.current = transformControls;
     scene.add(transformControls);
 
-    const ambient = new THREE.HemisphereLight(0xeaf4ff, 0x6d5436, project.environment.ambientIntensity * 0.8);
+    const ambient = new THREE.HemisphereLight(
+      showcaseMode ? 0xfff8e8 : 0xf5fbff,
+      showcaseMode ? 0xb88a54 : 0x826447,
+      showcaseMode ? 1.55 : project.environment.ambientIntensity * 0.8,
+    );
     scene.add(ambient);
-    const fill = new THREE.DirectionalLight(0xb7d7ff, 0.35);
+    const fill = new THREE.DirectionalLight(0xffe4c0, showcaseMode ? 0.82 : 0.35);
     fill.position.set(-project.environment.sunDirection.x, Math.max(0.5, project.environment.sunDirection.y * 0.4), -project.environment.sunDirection.z).normalize();
     scene.add(fill);
-    const sun = new THREE.DirectionalLight(0xffffff, project.environment.sunIntensity);
+    const sun = new THREE.DirectionalLight(0xffd79b, showcaseMode ? 1.85 : project.environment.sunIntensity);
     sun.position.set(project.environment.sunDirection.x, project.environment.sunDirection.y, project.environment.sunDirection.z).normalize();
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -579,17 +661,26 @@ export default function ThreeViewport({
       vertexColors: true,
       roughness: 1,
       metalness: 0,
+      transparent: showcaseMode,
+      opacity: showcaseMode ? 0.0 : 1,
     });
     const terrainMesh = new THREE.Mesh(terrainGeometry, terrainMaterial);
     terrainMesh.receiveShadow = true;
     terrainMesh.rotation.x = 0;
+    terrainMesh.visible = !showcaseMode;
     terrainMeshRef.current = terrainMesh;
     terrainMesh.name = "terrain";
     scene.add(terrainMesh);
 
+    const decorativeGroup = new THREE.Group();
+    decorativeGroup.name = "kenney-decorative";
+    decorativeRef.current = decorativeGroup;
+    scene.add(decorativeGroup);
+
     const grid = new THREE.GridHelper(terrain.width, terrain.resolution - 1, 0x7dd3fc, 0x334155);
     (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = readOnly ? 0.12 : 0.18;
+    (grid.material as THREE.Material).opacity = showcaseMode ? 0.0 : readOnly ? 0.12 : 0.18;
+    grid.visible = !showcaseMode;
     scene.add(grid);
 
     const brushGeometry = new THREE.RingGeometry(0.96, 1, 48);
@@ -598,7 +689,9 @@ export default function ThreeViewport({
     brushCursor.rotation.x = -Math.PI / 2;
     brushCursor.visible = false;
     brushCursorRef.current = brushCursor;
-    scene.add(brushCursor);
+    if (!showcaseMode) {
+      scene.add(brushCursor);
+    }
 
     const selectionRing = new THREE.Mesh(
       new THREE.TorusGeometry(0.8, 0.08, 8, 24),
@@ -607,90 +700,141 @@ export default function ThreeViewport({
     selectionRing.rotation.x = Math.PI / 2;
     selectionRing.visible = false;
     selectionRingRef.current = selectionRing;
-    scene.add(selectionRing);
+    if (!showcaseMode) {
+      scene.add(selectionRing);
+    }
 
     const rebuildSceneObjects = () => {
       objectMapRef.current.forEach((record) => scene.remove(record.object));
       objectMapRef.current.clear();
 
-      project.objects.forEach((objectData) => {
-        const asset = project.assets.find((entry) => entry.id === objectData.assetId);
-        if (!asset) return;
-        if (!project.layers.find((layer) => layer.id === objectData.layerId)?.visible) return;
-        const root = cloneAssetObject(asset, loadedAssetsRef.current[asset.id]);
-        root.name = objectData.name;
-        root.position.set(objectData.position.x, objectData.position.y, objectData.position.z);
-        root.rotation.set(objectData.rotation.x, objectData.rotation.y, objectData.rotation.z);
-        root.scale.set(objectData.scale.x, objectData.scale.y, objectData.scale.z);
-        root.userData.objectId = objectData.id;
-        root.userData.kind = "placed";
-        scene.add(root);
-        objectMapRef.current.set(objectData.id, { object: root, source: "placed" });
-      });
-
-      project.foliageGroups.forEach((group) => {
-        group.instances.forEach((instance) => {
-          const asset = project.assets.find((entry) => entry.id === instance.assetId);
+      if (!showcaseMode) {
+        project.objects.forEach((objectData) => {
+          // Water surface objects get special rendering
+          if (objectData.assetId === "__water-surface__") {
+            const meta = objectData.metadata as { kind?: string; radiusX?: number; radiusZ?: number } | undefined;
+            if (meta?.kind === "water-surface") {
+              const rx = meta.radiusX ?? 4;
+              const rz = meta.radiusZ ?? 4;
+              const shape = new THREE.Shape();
+              const segments = 24;
+              for (let i = 0; i <= segments; i++) {
+                const angle = (i / segments) * Math.PI * 2;
+                const px = Math.cos(angle) * rx;
+                const pz = Math.sin(angle) * rz;
+                if (i === 0) shape.moveTo(px, pz);
+                else shape.lineTo(px, pz);
+              }
+              const geom = new THREE.ShapeGeometry(shape);
+              const mat = new THREE.MeshStandardMaterial({
+                color: 0x3b8fbe,
+                transparent: true,
+                opacity: 0.55,
+                roughness: 0.18,
+                side: THREE.DoubleSide,
+              });
+              const mesh = new THREE.Mesh(geom, mat);
+              mesh.rotation.x = -Math.PI / 2;
+              mesh.position.set(objectData.position.x, objectData.position.y, objectData.position.z);
+              mesh.userData.objectId = objectData.id;
+              mesh.userData.kind = "placed";
+              scene.add(mesh);
+              objectMapRef.current.set(objectData.id, { object: mesh, source: "placed" });
+            }
+            return;
+          }
+          const asset = project.assets.find((entry) => entry.id === objectData.assetId);
           if (!asset) return;
+          if (!projectRef.current.layers.find((layer) => layer.id === objectData.layerId)?.visible) return;
           const root = cloneAssetObject(asset, loadedAssetsRef.current[asset.id]);
-          root.position.set(instance.position.x, instance.position.y, instance.position.z);
-          root.rotation.set(instance.rotation.x, instance.rotation.y, instance.rotation.z);
-          root.scale.set(instance.scale.x, instance.scale.y, instance.scale.z);
-          root.userData.kind = "foliage";
-          root.userData.instanceId = instance.id;
+          root.name = objectData.name;
+          root.position.set(objectData.position.x, objectData.position.y, objectData.position.z);
+          root.rotation.set(objectData.rotation.x, objectData.rotation.y, objectData.rotation.z);
+          root.scale.set(objectData.scale.x, objectData.scale.y, objectData.scale.z);
+          root.userData.objectId = objectData.id;
+          root.userData.kind = "placed";
           scene.add(root);
-          objectMapRef.current.set(instance.id, { object: root, source: "foliage" });
+          objectMapRef.current.set(objectData.id, { object: root, source: "placed" });
         });
-      });
 
-      project.markers.forEach((marker: GameplayMarker) => {
-        const color = new THREE.Color(
-          marker.type === "start-finish"
-            ? "#f59e0b"
-            : marker.type === "checkpoint"
-              ? "#22c55e"
-              : "#60a5fa",
-        );
-        const mesh = new THREE.Mesh(
-          new THREE.ConeGeometry(0.6, 1.8, 6),
-          new THREE.MeshStandardMaterial({ color }),
-        );
-        mesh.position.set(marker.position.x, marker.position.y + 0.9, marker.position.z);
-        mesh.userData.kind = "marker";
-        mesh.userData.markerId = marker.id;
-        scene.add(mesh);
-        objectMapRef.current.set(marker.id, { object: mesh, source: "marker" });
-      });
+        project.foliageGroups.forEach((group) => {
+          group.instances.forEach((instance) => {
+            const asset = project.assets.find((entry) => entry.id === instance.assetId);
+            if (!asset) return;
+            const root = cloneAssetObject(asset, loadedAssetsRef.current[asset.id]);
+            root.position.set(instance.position.x, instance.position.y, instance.position.z);
+            root.rotation.set(instance.rotation.x, instance.rotation.y, instance.rotation.z);
+            root.scale.set(instance.scale.x, instance.scale.y, instance.scale.z);
+            root.userData.kind = "foliage";
+            root.userData.instanceId = instance.id;
+            scene.add(root);
+            objectMapRef.current.set(instance.id, { object: root, source: "foliage" });
+          });
+        });
 
-      project.roads.forEach((road) => {
-        const roadMesh = createPathMesh(road, terrain);
-        if (roadMesh) {
-          roadMesh.userData.kind = "path";
-          roadMesh.userData.pathId = road.id;
-          roadMesh.userData.roadId = road.id;
-          scene.add(roadMesh);
-          objectMapRef.current.set(road.id, { object: roadMesh, source: "path" });
-        }
-      });
+        project.markers.forEach((marker: GameplayMarker) => {
+          const color = new THREE.Color(
+            marker.type === "start-finish"
+              ? "#f59e0b"
+              : marker.type === "checkpoint"
+                ? "#22c55e"
+                : "#60a5fa",
+          );
+          const mesh = new THREE.Mesh(
+            new THREE.ConeGeometry(0.6, 1.8, 6),
+            new THREE.MeshStandardMaterial({ color }),
+          );
+          mesh.position.set(marker.position.x, marker.position.y + 0.9, marker.position.z);
+          mesh.userData.kind = "marker";
+          mesh.userData.markerId = marker.id;
+          scene.add(mesh);
+          objectMapRef.current.set(marker.id, { object: mesh, source: "marker" });
+        });
 
-      if (project.scatterZones.length > 0) {
-        const latest = project.scatterZones[project.scatterZones.length - 1];
-        const scatterMesh = buildScatterPreview(latest);
-        if (scatterMesh) {
-          scatterMesh.userData.kind = "zone";
-          scatterMesh.userData.zoneId = latest.id;
-          scene.add(scatterMesh);
-          scatterPreviewRef.current = scatterMesh;
-        }
+        project.roads.forEach((road) => {
+          const roadMesh = createPathMesh(road, terrain);
+          if (roadMesh) {
+            roadMesh.userData.kind = "path";
+            roadMesh.userData.pathId = road.id;
+            roadMesh.userData.roadId = road.id;
+            scene.add(roadMesh);
+            objectMapRef.current.set(road.id, { object: roadMesh, source: "path" });
+          }
+        });
       }
     };
 
     rebuildSceneObjects();
 
+    const rebuildDecorations = () => {
+      const sceneDecor = decorativeRef.current;
+      if (!sceneDecor) return;
+      while (sceneDecor.children.length > 0) {
+        sceneDecor.remove(sceneDecor.children[0]);
+      }
+      if (showcaseMode) {
+        sceneDecor.add(buildKenneyShowcaseDiorama(projectRef.current));
+      } else {
+        const pathDressings = buildKenneyPathDressings(terrain, project.roads);
+        const cliffDressings = buildKenneyCliffDressings(terrain);
+        sceneDecor.add(pathDressings);
+        sceneDecor.add(cliffDressings);
+      }
+    };
+
+    rebuildDecorations();
+
     const handleResize = () => {
       const width = container.clientWidth;
       const height = container.clientHeight;
-      camera.aspect = width / height;
+      if (camera instanceof THREE.PerspectiveCamera) {
+        camera.aspect = width / height;
+      } else {
+        camera.left = -showcaseFrustumHeight * (width / height);
+        camera.right = showcaseFrustumHeight * (width / height);
+        camera.top = showcaseFrustumHeight;
+        camera.bottom = -showcaseFrustumHeight;
+      }
       camera.updateProjectionMatrix();
       renderer.setSize(width, height);
     };
@@ -717,8 +861,8 @@ export default function ThreeViewport({
 
     const syncTransformControls = () => {
       if (!transformRef.current) return;
-      const selected = selectionObjectId ? objectMapRef.current.get(selectionObjectId)?.object : null;
-      if (!readOnly && selected && activeTool === "select") {
+      const selected = selectionObjectIdRef.current ? objectMapRef.current.get(selectionObjectIdRef.current)?.object : null;
+      if (!readOnlyRef.current && selected && activeToolRef.current === "select") {
         transformRef.current.attach(selected);
         transformRef.current.visible = true;
       } else {
@@ -745,8 +889,8 @@ export default function ThreeViewport({
     };
 
     const placeAsset = (point: THREE.Vector3) => {
-      if (!selectedAssetId) return;
-      const asset = project.assets.find((entry) => entry.id === selectedAssetId);
+      if (!selectedAssetIdRef.current) return;
+      const asset = projectRef.current.assets.find((entry) => entry.id === selectedAssetIdRef.current);
       if (!asset) return;
       const currentHeight = sampleTerrainHeight(point, terrain).height;
       const object: PlacedObject = {
@@ -761,32 +905,32 @@ export default function ThreeViewport({
         locked: false,
         collisionEnabled: true,
       };
-      onWorldOperations?.([{ type: "addObject", payload: object }]);
-      if (!onWorldOperations) {
-        onProjectChange((current) => ({
+      onWorldOperationsRef.current?.([{ type: "addObject", payload: object }]);
+      if (!onWorldOperationsRef.current) {
+        onProjectChangeRef.current?.((current) => ({
           ...current,
           updatedAt: new Date().toISOString(),
           objects: [...current.objects, object],
         }));
       }
-      onSelectObject(object.id);
-      onStatus(`Placed ${asset.name}`);
+      onSelectObjectRef.current(object.id);
+      onStatusRef.current(`Placed ${asset.name}`);
     };
 
     const paintFoliageAt = (point: THREE.Vector3) => {
-      const asset = project.assets.find((entry) => entry.id === selectedAssetId && entry.canPaint)
-        ?? project.assets.find((entry) => entry.canPaint);
+      const asset = projectRef.current.assets.find((entry) => entry.id === selectedAssetIdRef.current && entry.canPaint)
+        ?? projectRef.current.assets.find((entry) => entry.canPaint);
       if (!asset) return;
-      if (foliageSettings.avoidRoads && isPointNearRoad(point, project.roads)) return;
-      if (foliageSettings.slopeLimit > 0 && terrainSlopeAt(point, terrain) > foliageSettings.slopeLimit) return;
+      if (foliageSettingsRef.current.avoidRoads && isPointNearRoad(point, projectRef.current.roads)) return;
+      if (foliageSettingsRef.current.slopeLimit > 0 && terrainSlopeAt(point, terrain) > foliageSettingsRef.current.slopeLimit) return;
 
-      if (foliageSettings.eraseMode) {
-        const removeIds = project.foliageGroups.flatMap((group) => group.instances.filter((instance) => {
+      if (foliageSettingsRef.current.eraseMode) {
+        const removeIds = projectRef.current.foliageGroups.flatMap((group) => group.instances.filter((instance) => {
           const dx = instance.position.x - point.x;
           const dz = instance.position.z - point.z;
           return Math.hypot(dx, dz) <= Math.max(0.8, brush.size * 0.45);
         }).map((instance) => instance.id));
-        onProjectChange((current) => ({
+        onProjectChangeRef.current?.((current) => ({
           ...current,
           updatedAt: new Date().toISOString(),
           foliageGroups: current.foliageGroups.map((group) => ({
@@ -798,53 +942,53 @@ export default function ThreeViewport({
             }),
           })),
         }));
-        onStatus("Erased foliage");
+        onStatusRef.current("Erased foliage");
         return;
       }
 
-      const count = Math.max(1, Math.round(Math.max(1, foliageSettings.density) * brush.strength * 1.5));
+      const count = Math.max(1, Math.round(Math.max(1, foliageSettingsRef.current.density) * brushRef.current.strength * 1.5));
       const newInstances = Array.from({ length: count }, () => {
         const angle = Math.random() * Math.PI * 2;
-        const radius = Math.random() * brush.size * 0.65;
+        const radius = Math.random() * brushRef.current.size * 0.65;
         const x = point.x + Math.cos(angle) * radius;
         const z = point.z + Math.sin(angle) * radius;
         const y = worldToTerrainHeight(new THREE.Vector3(x, point.y, z), terrain);
-        const scaleValue = THREE.MathUtils.lerp(foliageSettings.randomScaleMin, foliageSettings.randomScaleMax, Math.random());
+        const scaleValue = THREE.MathUtils.lerp(foliageSettingsRef.current.randomScaleMin, foliageSettingsRef.current.randomScaleMax, Math.random());
         const slope = terrainSlopeAt(new THREE.Vector3(x, y, z), terrain);
-        const slopeTooSteep = foliageSettings.slopeLimit > 0 && slope > foliageSettings.slopeLimit;
-        if (slopeTooSteep || (foliageSettings.avoidRoads && isPointNearRoad(new THREE.Vector3(x, y, z), project.roads))) {
+        const slopeTooSteep = foliageSettingsRef.current.slopeLimit > 0 && slope > foliageSettingsRef.current.slopeLimit;
+        if (slopeTooSteep || (foliageSettingsRef.current.avoidRoads && isPointNearRoad(new THREE.Vector3(x, y, z), projectRef.current.roads))) {
           return null;
         }
         return {
           id: crypto.randomUUID(),
           assetId: asset.id,
-          position: { x, y: foliageSettings.alignToTerrain ? y : point.y, z },
-          rotation: { x: 0, y: foliageSettings.randomRotation ? Math.random() * Math.PI * 2 : 0, z: 0 },
+          position: { x, y: foliageSettingsRef.current.alignToTerrain ? y : point.y, z },
+          rotation: { x: 0, y: foliageSettingsRef.current.randomRotation ? Math.random() * Math.PI * 2 : 0, z: 0 },
           scale: { x: scaleValue, y: scaleValue, z: scaleValue },
         };
       }).filter(Boolean);
 
       if (newInstances.length === 0) return;
-      const targetGroup = project.foliageGroups[0];
+      const targetGroup = projectRef.current.foliageGroups[0];
       if (targetGroup) {
-        onWorldOperations?.([{ type: "addFoliageInstances", targetId: targetGroup.id, payload: newInstances as typeof targetGroup.instances }]);
+        onWorldOperationsRef.current?.([{ type: "addFoliageInstances", targetId: targetGroup.id, payload: newInstances as typeof targetGroup.instances }]);
       }
-      onProjectChange((current) => ({
+      onProjectChangeRef.current?.((current) => ({
         ...current,
         updatedAt: new Date().toISOString(),
         foliageGroups: current.foliageGroups.map((group, index) =>
           index === 0 ? { ...group, instances: [...group.instances, ...(newInstances as typeof group.instances)] } : group,
         ),
       }));
-      onStatus(`Painted ${newInstances.length} foliage instances`);
+      onStatusRef.current(`Painted ${newInstances.length} foliage instances`);
     };
 
     const paintTerrainAt = (point: THREE.Vector3) => {
       let mode: "raise" | "lower" | "smooth" | "flatten" | "paint" = "raise";
-      if (activeTool === "terrain-lower") mode = "lower";
-      if (activeTool === "terrain-smooth") mode = "smooth";
-      if (activeTool === "terrain-flatten") mode = "flatten";
-      if (activeTool === "terrain-paint") mode = "paint";
+      if (activeToolRef.current === "terrain-lower") mode = "lower";
+      if (activeToolRef.current === "terrain-smooth") mode = "smooth";
+      if (activeToolRef.current === "terrain-flatten") mode = "flatten";
+      if (activeToolRef.current === "terrain-paint") mode = "paint";
       const payload = {
         center: { x: point.x, z: point.z },
         radius: brush.size,
@@ -853,7 +997,7 @@ export default function ThreeViewport({
         materialId: brush.materialId,
         flattenHeight: brush.flattenHeight,
       } as const;
-      onWorldOperations?.([
+      onWorldOperationsRef.current?.([
         mode === "paint"
           ? { type: "applyTerrainMaterialPatch", payload: { materialId: brush.materialId, center: payload.center, radius: payload.radius, strength: payload.strength, falloff: payload.falloff } }
           : { type: "applyTerrainHeightPatch", payload: { mode, center: payload.center, radius: payload.radius, strength: payload.strength, falloff: payload.falloff, flattenHeight: payload.flattenHeight } },
@@ -911,49 +1055,84 @@ export default function ThreeViewport({
     };
 
     const onPointerMove = (event: PointerEvent) => {
-      if (readOnly) return;
+      if (readOnlyRef.current) return;
       const terrainHit = raycastTerrain(event);
       if (terrainHit) {
         setBrushCursor(terrainHit.point);
-        if (pendingPaintRef.current.active && activeTool.startsWith("terrain-")) {
+        if (pendingPaintRef.current.active && activeToolRef.current.startsWith("terrain-")) {
           paintTerrainAt(terrainHit.point);
         }
-        if (pendingPaintRef.current.active && isPathTool) {
+        if (pendingPaintRef.current.active && (activeToolRef.current === "road-draw" || activeToolRef.current === "path-draw")) {
           updateRoadTerrain(terrainHit.point);
         }
-        if (pendingPaintRef.current.active && (activeTool === "foliage-paint" || activeTool === "foliage-erase")) {
+        if (pendingPaintRef.current.active && (activeToolRef.current === "foliage-paint" || activeToolRef.current === "foliage-erase")) {
           paintFoliageAt(terrainHit.point);
         }
       }
     };
 
     const onPointerDown = (event: PointerEvent) => {
-      if (readOnly) return;
+      if (readOnlyRef.current) return;
       pendingPaintRef.current.active = true;
       pendingPaintRef.current.pointerId = event.pointerId;
       const terrainHit = raycastTerrain(event);
       const objectHit = raycastObjects();
 
-      if (activeTool === "select") {
+      if (activeToolRef.current === "select") {
         applySelectedObjectSelection(objectHit);
         if (terrainHit) {
           const hit = sampleTerrainHeight(terrainHit.point, terrain);
-          onSelectTerrainCell({ x: hit.gridX, z: hit.gridZ });
+          onSelectTerrainCellRef.current({ x: hit.gridX, z: hit.gridZ });
         }
-      } else if (activeTool === "asset-place" && terrainHit) {
+      } else if (activeToolRef.current === "asset-place" && terrainHit) {
         placeAsset(terrainHit.point);
-      } else if (activeTool === "terrain-raise" || activeTool === "terrain-lower" || activeTool === "terrain-smooth" || activeTool === "terrain-flatten" || activeTool === "terrain-paint") {
+      } else if (activeToolRef.current === "fantasy-structure" && terrainHit) {
+        const point = terrainHit.point;
+        const presetId = selectedStructurePresetIdRef.current;
+        const assetMap = buildAssetMap(projectRef.current.assets);
+        const currentHeight = sampleTerrainHeight(point, terrain).height;
+        const rotation = Math.random() * Math.PI * 2;
+        const ops = buildStructureOperations(presetId, { x: point.x, y: currentHeight, z: point.z }, assetMap, rotation);
+        if (ops.length > 0) {
+          onWorldOperationsRef.current?.(ops);
+          if (!onWorldOperationsRef.current) {
+            const newObjects = ops.filter((op) => op.type === "addObject").map((op) => op.payload);
+            onProjectChangeRef.current?.((current) => ({
+              ...current,
+              updatedAt: new Date().toISOString(),
+              objects: [...current.objects, ...newObjects],
+            }));
+          }
+          onStatusRef.current(`Placed ${presetId.replace(/-/g, " ")}`);
+        }
+      } else if (activeToolRef.current === "fantasy-water" && terrainHit) {
+        const point = terrainHit.point;
+        const radius = waterPondRadiusRef.current;
+        const ops = buildWaterSurfaceOperations({ x: point.x, z: point.z }, radius, radius);
+        if (ops.length > 0) {
+          onWorldOperationsRef.current?.(ops);
+          if (!onWorldOperationsRef.current) {
+            const newObjects = ops.filter((op) => op.type === "addObject").map((op) => op.payload);
+            onProjectChangeRef.current?.((current) => ({
+              ...current,
+              updatedAt: new Date().toISOString(),
+              objects: [...current.objects, ...newObjects],
+            }));
+          }
+          onStatusRef.current(`Placed pond (radius ${radius})`);
+        }
+      } else if (activeToolRef.current === "terrain-raise" || activeToolRef.current === "terrain-lower" || activeToolRef.current === "terrain-smooth" || activeToolRef.current === "terrain-flatten" || activeToolRef.current === "terrain-paint") {
         if (terrainHit) {
           paintTerrainAt(terrainHit.point);
           const hit = sampleTerrainHeight(terrainHit.point, terrain);
-          onSelectTerrainCell({ x: hit.gridX, z: hit.gridZ });
+          onSelectTerrainCellRef.current({ x: hit.gridX, z: hit.gridZ });
         }
-      } else if (isPathTool && terrainHit) {
+      } else if ((activeToolRef.current === "road-draw" || activeToolRef.current === "path-draw") && terrainHit) {
         const point = terrainHit.point;
-        const path = project.roads[project.roads.length - 1];
+        const path = projectRef.current.roads[projectRef.current.roads.length - 1];
         if (path) {
-          onWorldOperations?.([{ type: "addRoadPoint", targetId: path.id, payload: { x: point.x, y: point.y, z: point.z } }]);
-          onProjectChange((current) => ({
+          onWorldOperationsRef.current?.([{ type: "addRoadPoint", targetId: path.id, payload: { x: point.x, y: point.y, z: point.z } }]);
+          onProjectChangeRef.current?.((current) => ({
             ...current,
             updatedAt: new Date().toISOString(),
             roads: current.roads.map((entry) =>
@@ -963,29 +1142,29 @@ export default function ThreeViewport({
             ),
           }));
           updateRoadTerrain(point);
-          onStatus(`Added path point to ${path.name}`);
+          onStatusRef.current(`Added path point to ${path.name}`);
         }
-      } else if (isZoneTool && terrainHit) {
+      } else if ((activeToolRef.current === "scatter" || activeToolRef.current === "zone-scatter") && terrainHit) {
         const point = terrainHit.point;
-        const zone = project.scatterZones[project.scatterZones.length - 1];
+        const zone = projectRef.current.scatterZones[projectRef.current.scatterZones.length - 1];
         if (!zone || zone.points.length >= 2) {
-          onWorldOperations?.([{ type: "addScatterZone", payload: {
+          onWorldOperationsRef.current?.([{ type: "addScatterZone", payload: {
             id: crypto.randomUUID(),
-            name: `Scatter ${project.scatterZones.length + 1}`,
+            name: `Scatter ${projectRef.current.scatterZones.length + 1}`,
             shape: "rectangle",
             points: [{ x: point.x, y: point.y, z: point.z }],
-            assetIds: selectedAssetId ? [selectedAssetId] : project.assets.filter((asset) => asset.canPaint).slice(0, 3).map((asset) => asset.id),
+            assetIds: selectedAssetIdRef.current ? [selectedAssetIdRef.current] : projectRef.current.assets.filter((asset) => asset.canPaint).slice(0, 3).map((asset) => asset.id),
             settings: {
-              count: scatterSettings.count,
-              minSpacing: scatterSettings.minSpacing,
-              randomScaleMin: scatterSettings.randomScaleMin,
-              randomScaleMax: scatterSettings.randomScaleMax,
-              randomRotation: scatterSettings.randomRotation,
-              slopeLimit: scatterSettings.slopeLimit,
+              count: scatterSettingsRef.current.count,
+              minSpacing: scatterSettingsRef.current.minSpacing,
+              randomScaleMin: scatterSettingsRef.current.randomScaleMin,
+              randomScaleMax: scatterSettingsRef.current.randomScaleMax,
+              randomRotation: scatterSettingsRef.current.randomRotation,
+              slopeLimit: scatterSettingsRef.current.slopeLimit,
             },
             generatedObjectIds: [],
           } }]);
-          onProjectChange((current) => ({
+          onProjectChangeRef.current?.((current) => ({
             ...current,
             updatedAt: new Date().toISOString(),
             scatterZones: [
@@ -995,22 +1174,22 @@ export default function ThreeViewport({
                 name: `Scatter ${current.scatterZones.length + 1}`,
                 shape: "rectangle",
                 points: [{ x: point.x, y: point.y, z: point.z }],
-                assetIds: selectedAssetId ? [selectedAssetId] : current.assets.filter((asset) => asset.canPaint).slice(0, 3).map((asset) => asset.id),
+                assetIds: selectedAssetIdRef.current ? [selectedAssetIdRef.current] : current.assets.filter((asset) => asset.canPaint).slice(0, 3).map((asset) => asset.id),
                 settings: {
-                  count: scatterSettings.count,
-                  minSpacing: scatterSettings.minSpacing,
-                  randomScaleMin: scatterSettings.randomScaleMin,
-                  randomScaleMax: scatterSettings.randomScaleMax,
-                  randomRotation: scatterSettings.randomRotation,
-                  slopeLimit: scatterSettings.slopeLimit,
+                  count: scatterSettingsRef.current.count,
+                  minSpacing: scatterSettingsRef.current.minSpacing,
+                  randomScaleMin: scatterSettingsRef.current.randomScaleMin,
+                  randomScaleMax: scatterSettingsRef.current.randomScaleMax,
+                  randomRotation: scatterSettingsRef.current.randomRotation,
+                  slopeLimit: scatterSettingsRef.current.slopeLimit,
                 },
                 generatedObjectIds: [],
               },
             ],
           }));
         } else {
-          onWorldOperations?.([{ type: "updateScatterZone", targetId: zone.id, payload: { points: [...zone.points, { x: point.x, y: point.y, z: point.z }] } }]);
-          onProjectChange((current) => ({
+          onWorldOperationsRef.current?.([{ type: "updateScatterZone", targetId: zone.id, payload: { points: [...zone.points, { x: point.x, y: point.y, z: point.z }] } }]);
+          onProjectChangeRef.current?.((current) => ({
             ...current,
             updatedAt: new Date().toISOString(),
             scatterZones: current.scatterZones.map((entry) =>
@@ -1047,9 +1226,9 @@ export default function ThreeViewport({
       controls.update();
       syncTransformControls();
       renderer.render(scene, camera);
-      if (onStats && frame.acc >= 500) {
+      if (onStatsRef.current && frame.acc >= 500) {
         const fps = (frame.count * 1000) / frame.acc;
-        onStats({
+        onStatsRef.current({
           fps,
           drawCalls: renderer.info.render.calls,
           sceneObjects: scene.children.length,
@@ -1077,20 +1256,41 @@ export default function ThreeViewport({
       renderer.dispose();
       container.replaceChildren();
     };
-  }, [assetReady, brush, activeTool, project, selectedAssetId, selectionObjectId, terrain, onProjectChange, onSelectObject, onSelectTerrainCell, onStatus]);
+  }, [assetReady, playMode, showcaseMode]);
 
   useEffect(() => {
     const scene = sceneRef.current;
     const terrainMesh = terrainMeshRef.current;
     if (!scene || !terrainMesh) return;
     const geom = terrainMesh.geometry as THREE.BufferGeometry;
-    applyTerrainBrush(terrain, new THREE.Vector3(), brush, "raise");
     createTerrainGeometry(terrain);
     const nextGeom = createTerrainGeometry(terrain);
     terrainMesh.geometry.dispose();
     terrainMesh.geometry = nextGeom;
+    const terrainMaterial = terrainMesh.material as THREE.MeshStandardMaterial;
+    terrainMaterial.transparent = showcaseMode;
+    terrainMaterial.opacity = showcaseMode ? 0.16 : 1;
     scene.background = new THREE.Color(project.environment.backgroundColor);
-  }, [project.environment.backgroundColor, terrain, brush]);
+    const grid = scene.children.find((child) => child.type === "GridHelper");
+    if (grid) {
+      grid.visible = !showcaseMode;
+      const material = (grid as THREE.GridHelper).material as THREE.Material;
+      material.transparent = true;
+      material.opacity = showcaseMode ? 0.02 : readOnly ? 0.12 : 0.18;
+    }
+    const decorativeGroup = decorativeRef.current;
+    if (decorativeGroup) {
+      while (decorativeGroup.children.length > 0) {
+        decorativeGroup.remove(decorativeGroup.children[0]);
+      }
+      if (showcaseMode) {
+        decorativeGroup.add(buildKenneyShowcaseDiorama(project));
+      } else {
+        decorativeGroup.add(buildKenneyPathDressings(terrain, project.roads));
+        decorativeGroup.add(buildKenneyCliffDressings(terrain));
+      }
+    }
+  }, [project.environment.backgroundColor, terrain, showcaseMode, project.roads, project.scatterZones, project.metadata.tags, project.metadata.showcaseLayout]);
 
   return <div className="canvas-host" ref={mountRef} />;
 }

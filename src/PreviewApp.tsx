@@ -32,6 +32,7 @@ function loadInitialPreviewProject(): WorldProject {
 
 export default function PreviewApp() {
   const [project, setProject] = useState<WorldProject>(() => loadInitialPreviewProject());
+  const showcaseMode = Boolean(project.metadata?.tags?.some((tag) => /showcase|kenney/i.test(tag)));
   const strictExportOnly = new URLSearchParams(window.location.search).get("strictExportOnly") === "1";
   const [status, setStatus] = useState(strictExportOnly ? "Strict export-only mode: load an exported package." : "Preview ready");
   const [fileKey, setFileKey] = useState(0);
@@ -119,13 +120,15 @@ export default function PreviewApp() {
       </div>
       <div className="layout" style={{ gridTemplateColumns: "1fr", height: "100%" }}>
         <main className="viewport-wrap">
-          <div className="viewport-overlay">
-            <div className="badge">This preview scene consumes exported world JSON.</div>
-            <div className="badge">
-              <strong>{project.name}</strong>
-              <span>{summary.objects} objects · {summary.placement} placement · {summary.paths} paths · {summary.markers} markers</span>
+          {!showcaseMode ? (
+            <div className="viewport-overlay">
+              <div className="badge">This preview scene consumes exported world JSON.</div>
+              <div className="badge">
+                <strong>{project.name}</strong>
+                <span>{summary.objects} objects · {summary.placement} placement · {summary.paths} paths · {summary.markers} markers</span>
+              </div>
             </div>
-          </div>
+          ) : null}
           <ThreeViewport
             project={project}
             activeTool="select"

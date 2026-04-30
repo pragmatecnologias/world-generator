@@ -18,6 +18,10 @@ import { validateWorldGenerationConfig } from "./core/schema/validators";
 import { applyAiWorldPatch } from "./core/ai/applyAiWorldPatch";
 import { validateAiPatch } from "./core/ai/worldPatchValidator";
 import type { WorldPatch } from "./core/ai/worldPatchSchema";
+import { FantasyIslandPanel } from "./editor/FantasyIslandPanel";
+import { generateFantasyWorld } from "./domains/fantasy/generateFantasyWorld";
+import { STRUCTURE_PRESETS } from "./domains/fantasy/fantasyAssets";
+import { FANTASY_ZONE_PRESETS } from "./domains/fantasy/fantasyPresets";
 import { applyAiWorldCommand } from "./core/ai/applyAiWorldCommand";
 import type { AiWorldCommand } from "./core/ai/aiWorldCommandSchema";
 import { validateAiWorldCommand } from "./core/ai/aiWorldCommandValidator";
@@ -121,6 +125,9 @@ const terrainTools: { id: EditorTool; label: string }[] = [
   { id: "zone-scatter", label: "Zone" },
   { id: "path-draw", label: "Path" },
   { id: "marker-place", label: "Markers" },
+  { id: "fantasy-island", label: "Fantasy" },
+  { id: "fantasy-structure", label: "Structure" },
+  { id: "fantasy-water", label: "Water" },
 ];
 
 const WORKSPACE_LAYOUT_KEY = "world-generator.workspace-layout";
@@ -258,9 +265,13 @@ function createAssetThumbnail(name: string, category: string) {
 
 function EditorApp() {
   const [project, setProject] = useState<WorldProject>(() => loadInitialProject());
+  const showcaseMode = Boolean(project.metadata?.tags?.some((tag) => /showcase|kenney/i.test(tag)));
+  const [showUiControls, setShowUiControls] = useState(() => !showcaseMode);
   const [activeTool, setActiveTool] = useState<EditorTool>("select");
   const [selectionObjectId, setSelectionObjectId] = useState<string | undefined>(project.objects[0]?.id);
   const [selectedAssetId, setSelectedAssetId] = useState<string | undefined>(project.assets[0]?.id);
+  const [selectedStructurePreset, setSelectedStructurePreset] = useState<string>("town-hall");
+  const [waterPondRadius, setWaterPondRadius] = useState<number>(4);
   const [statusMessage, setStatusMessage] = useState("Ready");
   const [bottomTab, setBottomTab] = useState<BottomTab>(() => {
     if (typeof window === "undefined") return DEFAULT_WORKSPACE_PANEL_SNAPSHOT.bottomTab;
@@ -349,6 +360,21 @@ function EditorApp() {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [openMenu, setOpenMenu] = useState<MenuKey>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    setShowUiControls(!showcaseMode);
+  }, [showcaseMode]);
+
+  useEffect(() => {
+    if (!showcaseMode) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" || (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "u")) {
+        setShowUiControls((current) => !current);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showcaseMode]);
   const [commandQuery, setCommandQuery] = useState("");
   const [worldDocument, setWorldDocument] = useState<WorldDocument>(() => worldProjectToDocument(project));
   const [jsonWorldDraft, setJsonWorldDraft] = useState("");
@@ -1486,6 +1512,36 @@ function EditorApp() {
   const leftDockWidth = leftDockPanel === "toolbox" ? workspaceLayout.toolboxWidth : leftDockPanel === "inspector" ? workspaceLayout.inspectorWidth : 0;
   const rightDockWidth = rightDockPanel === "toolbox" ? workspaceLayout.toolboxWidth : rightDockPanel === "inspector" ? workspaceLayout.inspectorWidth : 0;
 
+  if (showcaseMode && !showUiControls) {
+    return (
+      <div className="app showcase-shell">
+        <main className="viewport-wrap showcase-fullscreen">
+          <ThreeViewport
+            project={project}
+            activeTool={activeTool}
+            brush={brush}
+            selectionObjectId={selectionObjectId}
+            selectedAssetId={selectedAssetId}
+            foliageSettings={foliageSettings}
+            scatterSettings={scatterSettings}
+            playMode={playMode}
+            onSelectObject={setSelectionObjectId}
+            onSelectTerrainCell={(cell) => {
+              if (!cell) return;
+              setBrush((current) => ({ ...current, flattenHeight: project.terrain.heights[cell.z * project.terrain.resolution + cell.x] ?? 0 }));
+            }}
+            onProjectChange={commit}
+            onWorldOperations={commitOperations}
+            onStatus={setStatusMessage}
+            onStats={setViewportStats}
+            selectedStructurePresetId={selectedStructurePreset}
+            waterPondRadius={waterPondRadius}
+          />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <div className="topbar">
@@ -1778,6 +1834,60 @@ function EditorApp() {
             </div>
           </div>
 
+          {/* Fantasy Island Generator */}
+          {activeTool === "fantasy-island" && (
+            <div className="section">
+              <h3>Fantasy World Generator</h3>
+              <div className="muted">Generate a complete fantasy island world with one click.</div>
+              <FantasyIslandPanel
+                onGenerate={(config) => {
+                  commit((current) => generateFantasyWorld(config, current.assets));
+                  setStatusMessage("Fantasy world generated!");
+                }}
+              />
+            </div>
+          )}
+
+          {/* Fantasy Structure Placement */}
+          {activeTool === "fantasy-structure" && (
+            <div className="section">
+              <h3>Place Structure</h3>
+              <div className="muted">Click on terrain to place a building. Each click adds a complete multi-piece structure.</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                {STRUCTURE_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    onClick={() => setSelectedStructurePreset(preset.id)}
+                    style={{
+                      textAlign: "left",
+                      padding: "0.4rem 0.6rem",
+                      background: selectedStructurePreset === preset.id ? "var(--accent)" : "var(--panel-bg)",
+                      color: selectedStructurePreset === preset.id ? "#fff" : undefined,
+                      border: `1px solid ${selectedStructurePreset === preset.id ? "var(--accent)" : "var(--border)"}`,
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <strong>{preset.name}</strong>
+                    <span className="muted" style={{ fontSize: "0.75rem", marginLeft: "0.4rem" }}>{preset.pieces.length} pieces</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Fantasy Water Placement */}
+          {activeTool === "fantasy-water" && (
+            <div className="section">
+              <h3>Place Water</h3>
+              <div className="muted">Click on terrain to place a circular pond. The pond will appear as a translucent water surface.</div>
+              <div className="field">
+                <label>Pond Radius: {waterPondRadius}</label>
+                <input type="range" min="2" max="12" step="0.5" value={waterPondRadius} onChange={(e) => setWaterPondRadius(Number(e.target.value))} />
+              </div>
+            </div>
+          )}
+
           <div className="section">
             <h3>Placement Groups <span className="muted">— {project.foliageGroups.reduce((sum, group) => sum + group.instances.length, 0)} instances</span></h3>
             <div className="field">
@@ -1807,6 +1917,32 @@ function EditorApp() {
 
           <div className="section">
             <h3>Zone Scatter</h3>
+            {project.assets.some((a) => a.tags.some((t) => ["tree", "foliage", "crop", "rock"].includes(t))) && (
+              <div className="field">
+                <label>Fantasy Preset</label>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const preset = FANTASY_ZONE_PRESETS.find((p) => p.id === e.target.value);
+                    if (preset) {
+                      setScatterSettings({
+                        count: preset.scatterCount,
+                        minSpacing: preset.scatterMinSpacing,
+                        randomScaleMin: preset.scatterScaleMin,
+                        randomScaleMax: preset.scatterScaleMax,
+                        randomRotation: true,
+                        slopeLimit: 35,
+                      });
+                    }
+                  }}
+                >
+                  <option value="">Custom...</option>
+                  {FANTASY_ZONE_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="field">
               <label>Asset: {selectedAssetId ? (project.assets.find((a) => a.id === selectedAssetId)?.name ?? "Unknown") : "All paintable assets"}</label>
               <div className="chip-row" style={{ marginTop: "0.25rem" }}>
@@ -2011,10 +2147,12 @@ function EditorApp() {
 
         <main className="viewport-wrap">
           <div className="viewport-frame">
-            <div className="viewport-overlay">
-              <div className="badge">Left-click terrain for brush tools. Select objects to use transform controls.</div>
-              <div className="badge">Path and zone tools create visible world data that persists and exports.</div>
-            </div>
+            {!showcaseMode ? (
+              <div className="viewport-overlay">
+                <div className="badge">Left-click terrain for brush tools. Select objects to use transform controls.</div>
+                <div className="badge">Path and zone tools create visible world data that persists and exports.</div>
+              </div>
+            ) : null}
           </div>
           <ThreeViewport
             project={project}
@@ -2034,6 +2172,8 @@ function EditorApp() {
             onWorldOperations={commitOperations}
             onStatus={setStatusMessage}
             onStats={setViewportStats}
+            selectedStructurePresetId={selectedStructurePreset}
+            waterPondRadius={waterPondRadius}
           />
         </main>
 
@@ -2393,7 +2533,11 @@ function EditorApp() {
                     ...DEFAULT_WORLD_GENERATION_CONFIG,
                     generator: "generic",
                     theme: "forest",
-                    metadata: { ...(DEFAULT_WORLD_GENERATION_CONFIG.metadata ?? {}), description: "Generic path/zone generation preset" },
+                    metadata: {
+                      ...(DEFAULT_WORLD_GENERATION_CONFIG.metadata ?? {}),
+                      description: "Generic path/zone generation preset",
+                      tags: ["generated", "generic", "ai-ready", "cinematic", "showcase", "kenney"],
+                    },
                     paths: [
                       {
                         id: "generic-primary-path",
@@ -2456,6 +2600,15 @@ function EditorApp() {
                       },
                     ],
                   }, null, 2))}>Load Generic Config</button>
+                  <button onClick={() => setWorldConfigDraft(JSON.stringify({
+                    ...DEFAULT_WORLD_GENERATION_CONFIG,
+                    metadata: {
+                      ...(DEFAULT_WORLD_GENERATION_CONFIG.metadata ?? {}),
+                      description: "Art-directed Kenney showcase layout",
+                      tags: ["generated", "showcase", "kenney", "cinematic"],
+                      showcaseLayout: DEFAULT_WORLD_GENERATION_CONFIG.metadata?.showcaseLayout,
+                    },
+                  }, null, 2))}>Load Showcase Layout</button>
                   <button onClick={() => setWorldConfigDraft(JSON.stringify({ ...DEFAULT_WORLD_GENERATION_CONFIG, generator: "city", theme: "forest", metadata: { ...(DEFAULT_WORLD_GENERATION_CONFIG.metadata ?? {}), description: "City generator preset" } }, null, 2))}>Load City Config</button>
                   <button onClick={applyGenerationConfigDraft}>Generate World</button>
                 </div>

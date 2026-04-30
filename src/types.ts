@@ -159,6 +159,74 @@ export type EnvironmentSettings = {
   weather: "clear" | "cloudy" | "dusty" | "rain" | "storm";
 };
 
+export type ShowcaseCameraConfig = {
+  position: Vector3Data;
+  target: Vector3Data;
+  frustumHeight: number;
+  zoom: number;
+  backgroundColor: string;
+};
+
+export type ShowcaseSceneChain = {
+  kind: "path" | "river" | "bank";
+  points: Array<{ x: number; y?: number; z: number }>;
+  modelPaths: string[];
+  fit: number;
+  maxScale?: number;
+  yOffset?: number;
+};
+
+export type ShowcaseSceneRing = {
+  center: { x: number; z: number };
+  radiusX: number;
+  radiusZ: number;
+  count: number;
+  y: number;
+  modelPaths: string[];
+  fit: number;
+  wobble?: number;
+  maxScale?: number;
+};
+
+export type ShowcaseSceneCluster = {
+  kind: "tree" | "rock" | "camp" | "fence" | "sign";
+  center: { x: number; y: number; z: number };
+  radius: number;
+  count: number;
+  fit: number;
+  maxScale?: number;
+};
+
+export type ShowcaseHeroProp = {
+  path: string;
+  x: number;
+  y: number;
+  z: number;
+  rotationY?: number;
+  fit: number;
+  maxScale?: number;
+};
+
+export type ShowcaseLayoutConfig = {
+  renderMode?: "models" | "isometricSprites" | "referencePlate";
+  camera: ShowcaseCameraConfig;
+  base: {
+    center: { x: number; z: number };
+    levels: number;
+    tileFit: number;
+  };
+  landmasses: Array<{
+    center: { x: number; z: number };
+    levels: number;
+    tileFit: number;
+    yOffset?: number;
+  }>;
+  chains: ShowcaseSceneChain[];
+  rings: ShowcaseSceneRing[];
+  clusters: ShowcaseSceneCluster[];
+  heroProps: ShowcaseHeroProp[];
+};
+
 export type LayerDefinition = {
   id: string;
   name: string;
@@ -184,6 +252,8 @@ export type WorldProject = {
   layers: LayerDefinition[];
   metadata: {
     description: string;
+    tags?: string[];
+    showcaseLayout?: ShowcaseLayoutConfig;
   };
 };
 
@@ -246,7 +316,10 @@ export type EditorTool =
   | "road-edit"
   | "path-draw"
   | "path-edit"
-  | "marker-place";
+  | "marker-place"
+  | "fantasy-island"
+  | "fantasy-structure"
+  | "fantasy-water";
 
 export type BrushState = {
   size: number;
